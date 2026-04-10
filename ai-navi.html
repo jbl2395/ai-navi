@@ -237,6 +237,216 @@
     opacity:0;
     transition:opacity 0.5s;
   }
+
+  /* ===== 設定ボタン（目立たない） ===== */
+  #sett-btn{
+    position:fixed;top:calc(env(safe-area-inset-top,0px)+14px);right:16px;
+    z-index:200;
+    width:36px;height:36px;
+    border-radius:50%;
+    background:rgba(255,255,255,0.06);
+    border:1px solid rgba(255,255,255,0.1);
+    display:flex;align-items:center;justify-content:center;
+    cursor:pointer;touch-action:manipulation;
+    transition:all 0.2s;
+    opacity:0;
+    animation:settFadeIn 1s ease 2s forwards;
+  }
+  @keyframes settFadeIn{to{opacity:1;}}
+  #sett-btn:active{transform:scale(0.9);background:rgba(255,255,255,0.12);}
+  #sett-btn svg{width:16px;height:16px;opacity:0.45;}
+
+  /* ===== 設定パネル背景 ===== */
+  #sett-bg{
+    position:fixed;inset:0;z-index:300;
+    background:rgba(0,0,0,0.6);
+    display:none;
+    backdrop-filter:blur(4px);
+  }
+  #sett-bg.on{display:block;}
+
+  /* ===== 設定パネル本体 ===== */
+  #sett-panel{
+    position:fixed;bottom:0;left:0;right:0;z-index:301;
+    background:#080c14;
+    border-top:1px solid rgba(0,200,255,0.2);
+    border-radius:20px 20px 0 0;
+    max-height:88vh;
+    overflow-y:auto;
+    -webkit-overflow-scrolling:touch;
+    padding-bottom:calc(env(safe-area-inset-bottom,0px)+20px);
+    transform:translateY(100%);
+    transition:transform 0.35s cubic-bezier(0.32,0.72,0,1);
+  }
+  #sett-panel.on{transform:translateY(0);}
+
+  .sett-handle{
+    width:36px;height:4px;
+    background:rgba(255,255,255,0.15);
+    border-radius:2px;
+    margin:14px auto 0;
+  }
+  .sett-header{
+    font-family:'Orbitron',sans-serif;
+    font-size:15px;font-weight:700;
+    color:rgba(0,200,255,0.9);
+    letter-spacing:0.15em;
+    padding:16px 18px 14px;
+    border-bottom:1px solid rgba(255,255,255,0.06);
+  }
+
+  /* セクション */
+  .sett-sec{padding:16px 18px 4px;}
+  .sett-sec-ttl{
+    font-size:10px;font-weight:600;
+    color:rgba(0,200,255,0.5);
+    letter-spacing:0.18em;
+    margin-bottom:12px;
+    text-transform:uppercase;
+  }
+
+  /* 行 */
+  .sett-row{
+    display:flex;align-items:center;
+    padding:10px 0;
+    border-bottom:1px solid rgba(255,255,255,0.04);
+    gap:10px;
+  }
+  .sett-row:last-child{border-bottom:none;}
+  .sett-lbl{flex:1;}
+  .sett-lbl-main{font-size:14px;color:rgba(255,255,255,0.85);}
+  .sett-lbl-sub{font-size:11px;color:rgba(255,255,255,0.3);margin-top:2px;}
+
+  /* トグルスイッチ */
+  .tog{
+    width:44px;height:26px;
+    border-radius:13px;
+    background:rgba(255,255,255,0.12);
+    position:relative;cursor:pointer;
+    transition:background 0.2s;flex-shrink:0;
+    touch-action:manipulation;
+  }
+  .tog.on{background:rgba(0,200,255,0.7);}
+  .tog::after{
+    content:'';position:absolute;
+    top:3px;left:3px;
+    width:20px;height:20px;
+    border-radius:50%;background:#fff;
+    transition:transform 0.2s;
+    box-shadow:0 1px 4px rgba(0,0,0,0.4);
+  }
+  .tog.on::after{transform:translateX(18px);}
+
+  /* APIキー入力行 */
+  .api-row{
+    display:flex;align-items:center;
+    padding:8px 0;
+    border-bottom:1px solid rgba(255,255,255,0.04);
+    gap:8px;flex-wrap:wrap;
+  }
+  .api-row:last-child{border-bottom:none;}
+  .api-lbl{
+    font-size:13px;color:rgba(255,255,255,0.7);
+    width:100%;margin-bottom:4px;
+  }
+  .api-inp-wrap{display:flex;align-items:center;gap:8px;width:100%;}
+  .api-inp{
+    flex:1;
+    background:rgba(255,255,255,0.05);
+    border:1px solid rgba(255,255,255,0.1);
+    border-radius:8px;
+    padding:9px 12px;
+    color:#fff;font-size:12px;
+    font-family:'Share Tech Mono',monospace;
+    outline:none;
+  }
+  .api-inp:focus{border-color:rgba(0,200,255,0.5);}
+  .api-inp::placeholder{color:rgba(255,255,255,0.2);}
+
+  /* 選択ボタン群 */
+  .sel-btns{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;}
+  .sel-btn{
+    padding:7px 12px;
+    border-radius:8px;
+    font-size:12px;font-weight:600;
+    border:1.5px solid rgba(255,255,255,0.1);
+    color:rgba(255,255,255,0.4);
+    background:rgba(255,255,255,0.04);
+    cursor:pointer;touch-action:manipulation;
+    transition:all 0.15s;
+  }
+  .sel-btn.sel{
+    border-color:rgba(0,200,255,0.7);
+    color:rgba(0,200,255,0.9);
+    background:rgba(0,200,255,0.1);
+  }
+  .sel-btn:active{transform:scale(0.94);}
+
+  /* 場所リスト */
+  .place-item{
+    display:flex;align-items:center;
+    padding:10px 0;
+    border-bottom:1px solid rgba(255,255,255,0.04);
+    gap:10px;
+  }
+  .place-item:last-child{border-bottom:none;}
+  .place-info{flex:1;}
+  .place-name{font-size:13px;color:rgba(255,255,255,0.85);}
+  .place-addr{font-size:11px;color:rgba(255,255,255,0.3);margin-top:2px;}
+  .place-btns{display:flex;gap:6px;}
+  .place-edit-btn,.place-del-btn{
+    font-size:11px;padding:5px 9px;border-radius:7px;
+    border:none;cursor:pointer;touch-action:manipulation;
+  }
+  .place-edit-btn{background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.6);}
+  .place-del-btn{background:rgba(255,60,60,0.15);color:rgba(255,100,100,0.8);}
+
+  .add-place-btn{
+    width:100%;padding:11px;margin-top:8px;
+    background:rgba(0,200,255,0.08);
+    border:1px dashed rgba(0,200,255,0.25);
+    border-radius:10px;
+    color:rgba(0,200,255,0.6);
+    font-size:13px;cursor:pointer;
+    touch-action:manipulation;
+    font-family:'Share Tech Mono',monospace;
+  }
+  .add-place-btn:active{background:rgba(0,200,255,0.15);}
+
+  .sett-pad{height:20px;}
+
+  /* 保存ボタン */
+  .sett-save-btn{
+    width:calc(100% - 36px);
+    margin:12px 18px 0;
+    padding:13px;
+    background:rgba(0,200,255,0.18);
+    border:1px solid rgba(0,200,255,0.4);
+    border-radius:11px;
+    color:rgba(0,200,255,0.9);
+    font-size:14px;font-weight:600;
+    letter-spacing:0.1em;
+    cursor:pointer;touch-action:manipulation;
+    font-family:'Orbitron',sans-serif;
+    transition:all 0.15s;
+  }
+  .sett-save-btn:active{background:rgba(0,200,255,0.28);}
+
+  /* テーマカラー */
+  .theme-btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;}
+  .theme-btn{
+    width:36px;height:36px;border-radius:50%;
+    border:2.5px solid transparent;
+    cursor:pointer;touch-action:manipulation;
+    transition:all 0.15s;position:relative;
+  }
+  .theme-btn.sel{border-color:#fff;transform:scale(1.15);}
+  .theme-btn.sel::after{
+    content:'✓';position:absolute;inset:0;
+    display:flex;align-items:center;justify-content:center;
+    color:#fff;font-size:14px;font-weight:800;
+    text-shadow:0 1px 3px rgba(0,0,0,0.8);
+  }
 </style>
 </head>
 <body>
@@ -293,6 +503,158 @@
 <div id="status">SYSTEM READY</div>
 <div id="zoom-overlay"></div>
 
+<!-- 設定ボタン（目立たない歯車） -->
+<button id="sett-btn" onclick="openSett()">
+  <svg viewBox="0 0 24 24" fill="none" stroke="rgba(0,200,255,0.8)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="3"/>
+    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+  </svg>
+</button>
+
+<!-- 設定パネル背景 -->
+<div id="sett-bg" onclick="closeSett()"></div>
+
+<!-- 設定パネル -->
+<div id="sett-panel">
+  <div class="sett-handle"></div>
+  <div class="sett-header">⚙ SETTINGS</div>
+
+  <!-- APIキー -->
+  <div class="sett-sec">
+    <div class="sett-sec-ttl">🔑 APIキー</div>
+
+    <div class="api-row">
+      <div class="api-lbl">Google Maps API</div>
+      <div class="api-inp-wrap">
+        <input class="api-inp" id="inp-maps" type="password" placeholder="AIza...">
+        <div class="tog" id="tog-maps" onclick="toggleApi('maps')"></div>
+      </div>
+    </div>
+
+    <div class="api-row">
+      <div class="api-lbl">Gemini API</div>
+      <div class="api-inp-wrap">
+        <input class="api-inp" id="inp-gemini" type="password" placeholder="AIza...">
+        <div class="tog" id="tog-gemini" onclick="toggleApi('gemini')"></div>
+      </div>
+    </div>
+
+    <div class="api-row">
+      <div class="api-lbl">ElevenLabs API</div>
+      <div class="api-inp-wrap">
+        <input class="api-inp" id="inp-eleven" type="password" placeholder="sk_...">
+        <div class="tog" id="tog-eleven" onclick="toggleApi('eleven')"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 音声設定 -->
+  <div class="sett-sec">
+    <div class="sett-sec-ttl">🔊 音声設定</div>
+
+    <div class="sett-row">
+      <div class="sett-lbl">
+        <div class="sett-lbl-main">音声案内</div>
+        <div class="sett-lbl-sub">スピーカーで案内を読み上げ</div>
+      </div>
+      <div class="tog on" id="tog-voice" onclick="toggleSett('voice')"></div>
+    </div>
+
+    <div class="sett-row" style="flex-direction:column;align-items:flex-start;">
+      <div class="sett-lbl-main" style="margin-bottom:6px;">音声エンジン</div>
+      <div class="sel-btns">
+        <button class="sel-btn sel" id="eng-browser" onclick="setEngine('browser')">ブラウザ内蔵</button>
+        <button class="sel-btn" id="eng-google" onclick="setEngine('google')">Google TTS</button>
+        <button class="sel-btn" id="eng-eleven" onclick="setEngine('eleven')">ElevenLabs</button>
+      </div>
+    </div>
+
+    <div class="sett-row" style="flex-direction:column;align-items:flex-start;">
+      <div class="sett-lbl-main" style="margin-bottom:6px;">声の種類</div>
+      <div id="voice-list" style="width:100%;"></div>
+    </div>
+
+    <div class="sett-row" style="flex-direction:column;align-items:flex-start;">
+      <div class="sett-lbl-main" style="margin-bottom:6px;">話す速度</div>
+      <div class="sel-btns">
+        <button class="sel-btn" id="spd-slow" onclick="setSpeed('slow')">ゆっくり</button>
+        <button class="sel-btn sel" id="spd-normal" onclick="setSpeed('normal')">普通</button>
+        <button class="sel-btn" id="spd-fast" onclick="setSpeed('fast')">速い</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ナビ設定 -->
+  <div class="sett-sec">
+    <div class="sett-sec-ttl">🗺 ナビ設定</div>
+
+    <div class="sett-row" style="flex-direction:column;align-items:flex-start;">
+      <div class="sett-lbl-main" style="margin-bottom:6px;">ルート優先</div>
+      <div class="sel-btns">
+        <button class="sel-btn" id="route-highway" onclick="setRoute('highway')">🛣 高速優先</button>
+        <button class="sel-btn" id="route-normal" onclick="setRoute('normal')">🏘 一般道</button>
+        <button class="sel-btn sel" id="route-ask" onclick="setRoute('ask')">❓ 毎回聞く</button>
+      </div>
+    </div>
+
+    <div class="sett-row" style="flex-direction:column;align-items:flex-start;">
+      <div class="sett-lbl-main" style="margin-bottom:6px;">距離単位</div>
+      <div class="sel-btns">
+        <button class="sel-btn sel" id="unit-km" onclick="setUnit('km')">km</button>
+        <button class="sel-btn" id="unit-mi" onclick="setUnit('mi')">マイル</button>
+      </div>
+    </div>
+
+    <div class="sett-row" style="flex-direction:column;align-items:flex-start;">
+      <div class="sett-lbl-main" style="margin-bottom:6px;">案内タイミング</div>
+      <div class="sel-btns">
+        <button class="sel-btn" id="timing-300" onclick="setTiming('300')">300m前</button>
+        <button class="sel-btn sel" id="timing-500" onclick="setTiming('500')">500m前</button>
+        <button class="sel-btn" id="timing-1000" onclick="setTiming('1000')">1km前</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 表示設定 -->
+  <div class="sett-sec">
+    <div class="sett-sec-ttl">🎨 表示設定</div>
+
+    <div class="sett-row">
+      <div class="sett-lbl">
+        <div class="sett-lbl-main">地図の向き</div>
+        <div class="sett-lbl-sub">進行方向 / 北固定</div>
+      </div>
+      <div class="sel-btns">
+        <button class="sel-btn sel" id="map-heading" onclick="setMapDir('heading')">進行方向</button>
+        <button class="sel-btn" id="map-north" onclick="setMapDir('north')">北固定</button>
+      </div>
+    </div>
+
+    <div class="sett-row">
+      <div class="sett-lbl">
+        <div class="sett-lbl-main">夜間モード自動切替</div>
+        <div class="sett-lbl-sub">日没後に自動でダーク表示</div>
+      </div>
+      <div class="tog on" id="tog-night" onclick="toggleSett('night')"></div>
+    </div>
+
+    <div class="sett-row" style="flex-direction:column;align-items:flex-start;">
+      <div class="sett-lbl-main" style="margin-bottom:8px;">テーマカラー</div>
+      <div class="theme-btns" id="theme-btns"></div>
+    </div>
+  </div>
+
+  <!-- 登録場所 -->
+  <div class="sett-sec">
+    <div class="sett-sec-ttl">📍 登録場所</div>
+    <div id="places-list"></div>
+    <button class="add-place-btn" onclick="addPlace()">＋ 場所を追加</button>
+  </div>
+
+  <button class="sett-save-btn" onclick="saveSett()">保存する</button>
+  <div class="sett-pad"></div>
+</div>
+
 <script>
 // ============================================================
 // WebGL 地球儀
@@ -316,405 +678,4 @@ var globe=(function(){
     uniform sampler2D u_map;
     uniform float u_rot;
     uniform float u_time;
-    uniform float u_fade;
-
-    float hash(vec2 p){
-      p=fract(p*vec2(127.1,311.7));
-      p+=dot(p,p+19.19);
-      return fract(p.x*p.y);
-    }
-    float noise(vec2 p){
-      vec2 i=floor(p),f=fract(p);
-      vec2 u=f*f*(3.0-2.0*f);
-      return mix(mix(hash(i),hash(i+vec2(1,0)),u.x),
-                 mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),u.x),u.y);
-    }
-    float fbm(vec2 p){
-      float v=0.0,a=0.5;
-      for(int i=0;i<4;i++){v+=noise(p)*a;p*=2.1;a*=0.5;}
-      return v;
-    }
-
-    void main(){
-      vec2 dc=(v_uv-0.5)*2.0;
-      float dist=length(dc);
-
-      // 地球の外は透明
-      if(dist>1.04){
-        gl_FragColor=vec4(0.0,0.0,0.0,0.0);
-        return;
-      }
-
-      // 大気リム
-      if(dist>1.0){
-        float rim=1.0-(dist-1.0)/0.04;
-        rim=pow(clamp(rim,0.0,1.0),1.5);
-        vec3 atmCol=mix(vec3(0.15,0.5,1.0),vec3(0.4,0.78,1.0),rim);
-        gl_FragColor=vec4(atmCol,rim*0.9*u_fade);
-        return;
-      }
-
-      // 球面計算
-      vec2 sph=dc;
-      float z=sqrt(max(0.0,1.0-dot(sph,sph)));
-      vec3 n=normalize(vec3(sph.x,sph.y,z));
-
-      float lat=atan(n.y,length(n.xz));
-      float lon=atan(n.x,n.z)+u_rot;
-
-      float tu=fract(lon/6.2832+0.5);
-      float tv=1.0-(lat/3.14159+0.5);
-
-      // テクスチャサンプリング（大陸マップ）
-      vec4 mapCol=texture2D(u_map,vec2(tu,tv));
-      float isLand=mapCol.r; // 赤チャンネル=陸地
-
-      // 海の色（深青〜明青）
-      float oceanDepth=fbm(vec2(tu,tv)*4.0+vec2(2.1,1.3));
-      vec3 oceanCol=mix(vec3(0.01,0.05,0.40),vec3(0.04,0.20,0.72),oceanDepth*0.9);
-
-      // 陸地の色（青紺系）
-      float terrain=fbm(vec2(tu,tv)*7.0+vec2(5.1,3.7))*0.35+0.65;
-      vec3 landCol=mix(vec3(0.05,0.15,0.45),vec3(0.10,0.28,0.62),terrain);
-
-      // 極地（白）
-      float polar=smoothstep(0.80,0.94,abs(tv-0.5)*2.0);
-      vec3 polarCol=vec3(0.78,0.90,1.0);
-
-      vec3 col=mix(oceanCol,landCol,isLand);
-      col=mix(col,polarCol,polar);
-
-      // 雲（ノイズベース、青白）
-      float cloud=fbm(vec2(tu+u_time*0.003,tv)*5.0+vec2(1.1,2.2));
-      cloud=smoothstep(0.54,0.68,cloud)*(1.0-polar*0.5);
-      col=mix(col,vec3(0.82,0.92,1.0),cloud*0.65);
-
-      // ライティング
-      vec3 light=normalize(vec3(-0.5,0.4,0.8));
-      float diff=clamp(dot(n,light),0.0,1.0);
-      col*=(0.22+diff*0.78);
-
-      // リム光（青）
-      float rim=pow(1.0-z,4.0);
-      col+=vec3(0.04,0.18,0.60)*rim*0.9;
-
-      // 夜側の街明かり
-      float nightFactor=clamp(-dot(n,light)*2.5,0.0,1.0);
-      float city=fbm(vec2(tu,tv)*14.0)*0.5;
-      city=step(0.64,city)*isLand*(1.0-polar);
-      col+=vec3(0.55,0.75,1.0)*city*nightFactor*0.45;
-
-      gl_FragColor=vec4(col,u_fade);
-    }
-  `;
-
-  function mkShader(type,src){
-    var s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);
-    if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)){console.error(gl.getShaderInfoLog(s));return null;}
-    return s;
-  }
-  var vs=mkShader(gl.VERTEX_SHADER,VS),fs=mkShader(gl.FRAGMENT_SHADER,FS);
-  if(!vs||!fs)return null;
-  var prog=gl.createProgram();
-  gl.attachShader(prog,vs);gl.attachShader(prog,fs);gl.linkProgram(prog);
-  gl.useProgram(prog);
-
-  var buf=gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER,buf);
-  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
-  var ap=gl.getAttribLocation(prog,'a_pos');
-  gl.enableVertexAttribArray(ap);
-  gl.vertexAttribPointer(ap,2,gl.FLOAT,false,0,0);
-
-  gl.enable(gl.BLEND);
-  gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
-
-  var uRot=gl.getUniformLocation(prog,'u_rot');
-  var uTime=gl.getUniformLocation(prog,'u_time');
-  var uFade=gl.getUniformLocation(prog,'u_fade');
-  var uMap=gl.getUniformLocation(prog,'u_map');
-
-  // ---- Canvas2Dで大陸マップテクスチャを生成 ----
-  var MAP_W=1024,MAP_H=512;
-  var mapCanvas=document.createElement('canvas');
-  mapCanvas.width=MAP_W;mapCanvas.height=MAP_H;
-  var mc=mapCanvas.getContext('2d');
-
-  // 背景：海（黒 = 陸地なし）
-  mc.fillStyle='#000';
-  mc.fillRect(0,0,MAP_W,MAP_H);
-
-  // 陸地を白で描画（赤チャンネルが1.0になる）
-  mc.fillStyle='#fff';
-
-  // lon/lat → ピクセル変換
-  function ll(lon,lat){
-    return[(lon+180)/360*MAP_W,(90-lat)/180*MAP_H];
-  }
-  function poly(pts){
-    mc.beginPath();
-    var p0=ll(pts[0][0],pts[0][1]);
-    mc.moveTo(p0[0],p0[1]);
-    for(var i=1;i<pts.length;i++){var p=ll(pts[i][0],pts[i][1]);mc.lineTo(p[0],p[1]);}
-    mc.closePath();mc.fill();
-  }
-
-  // ユーラシア大陸
-  poly([
-    [-9,71],[20,78],[40,72],[60,73],[80,73],[100,68],[110,60],[120,55],[130,48],[135,40],
-    [136,34],[130,28],[120,22],[108,18],[100,10],[100,2],[104,-2],[108,2],[110,8],
-    [120,22],[124,14],[118,6],[112,2],[108,2],[100,10],[92,8],[82,10],[72,14],[64,22],
-    [58,24],[46,14],[40,12],[34,20],[30,28],[24,36],[16,40],[8,44],[2,44],[-2,44],
-    [-6,38],[-8,36],[-8,44],[-2,52],[4,54],[8,58],[14,64],[20,68],[28,70],[-9,71]
-  ]);
-  // スカンジナビア
-  poly([[4,58],[8,62],[14,66],[20,70],[26,70],[28,64],[22,58],[14,56],[8,56],[4,58]]);
-  // グレートブリテン島
-  poly([[-5,50],[-3,52],[-2,54],[0,58],[-2,58],[-4,56],[-6,56],[-5,50]]);
-
-  // アフリカ
-  poly([
-    [-6,36],[2,36],[10,38],[18,38],[32,30],[40,22],[44,12],[44,2],[40,-4],[36,-18],
-    [28,-34],[22,-34],[16,-28],[12,-18],[10,-8],[8,4],[4,6],[2,8],[-4,6],[-12,8],
-    [-16,12],[-18,14],[-16,20],[-18,28],[-14,32],[-6,36]
-  ]);
-  // マダガスカル
-  poly([[44,-12],[50,-14],[50,-22],[46,-26],[44,-22],[44,-12]]);
-
-  // 北アメリカ
-  poly([
-    [-168,68],[-140,60],[-128,50],[-124,38],[-118,34],[-96,18],[-86,14],[-84,10],
-    [-78,8],[-76,8],[-72,10],[-68,12],[-64,18],[-60,24],[-60,34],[-66,44],
-    [-70,46],[-68,48],[-62,46],[-60,46],[-64,48],[-68,52],[-72,56],[-78,62],
-    [-86,66],[-92,70],[-100,70],[-120,70],[-140,70],[-160,70],[-168,68]
-  ]);
-  // グリーンランド
-  poly([[-44,76],[-20,70],[-18,76],[-26,84],[-46,84],[-54,80],[-44,76]]);
-  // フロリダ・中米
-  poly([[-82,24],[-80,26],[-82,28],[-84,28],[-82,24]]);
-
-  // 南アメリカ
-  poly([
-    [-80,10],[-72,-2],[-64,-8],[-52,-4],[-46,-14],[-40,-22],[-44,-34],[-66,-56],
-    [-68,-52],[-62,-38],[-56,-28],[-52,-18],[-64,-4],[-72,2],[-76,8],[-80,10]
-  ]);
-
-  // オーストラリア
-  poly([
-    [114,-22],[122,-18],[130,-14],[138,-12],[148,-18],[154,-26],[152,-36],[144,-38],
-    [136,-34],[128,-32],[120,-30],[114,-26],[114,-22]
-  ]);
-  // タスマニア
-  poly([[144,-40],[148,-42],[146,-44],[144,-42],[144,-40]]);
-  // ニュージーランド（北島）
-  poly([[172,-36],[178,-38],[176,-42],[172,-40],[172,-36]]);
-  // ニュージーランド（南島）
-  poly([[168,-44],[174,-44],[172,-46],[168,-46],[166,-44],[168,-44]]);
-
-  // 日本列島（本州）
-  poly([
-    [130,31],[131,32],[132,34],[133,34],[134,34],[135,34],[136,36],
-    [137,36],[138,38],[139,40],[140,40],[141,41],[141,40],[140,38],
-    [138,36],[136,34],[135,34],[134,32],[132,32],[130,31]
-  ]);
-  // 北海道
-  poly([[140,42],[142,44],[144,44],[145,44],[145,42],[142,42],[140,42]]);
-  // 九州
-  poly([[130,32],[132,32],[132,30],[130,30],[130,32]]);
-  // 四国
-  poly([[132,34],[134,34],[134,32],[132,32],[132,34]]);
-
-  // 台湾
-  poly([[120,22],[122,24],[122,22],[120,22]]);
-  // フィリピン
-  poly([[118,16],[122,18],[124,14],[120,12],[118,16]]);
-  // ボルネオ
-  poly([[108,6],[118,6],[118,2],[114,-2],[108,2],[108,6]]);
-  // スマトラ
-  poly([[96,4],[106,2],[108,-6],[104,-6],[96,4]]);
-  // ジャワ
-  poly([[106,-6],[114,-8],[112,-8],[106,-8],[106,-6]]);
-
-  // スリランカ
-  poly([[80,8],[82,8],[82,6],[80,6],[80,8]]);
-  // アイスランド
-  poly([[-24,64],[-14,66],[-14,64],[-18,62],[-24,64]]);
-
-  // GLテクスチャとして登録
-  var tex=gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D,tex);
-  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,mapCanvas);
-  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.REPEAT);
-  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
-
-  var rotY=0,targetRot=0,spinning=true;
-  var startTime=performance.now();
-  var fadeIn=0;
-
-  function render(){
-    var t=(performance.now()-startTime)/1000;
-    fadeIn=Math.min(1,t/1.5);
-
-    if(spinning){rotY+=0.004;}
-    else{
-      // ターゲットへ滑らかに回転
-      var diff=targetRot-rotY;
-      while(diff>Math.PI)diff-=Math.PI*2;
-      while(diff<-Math.PI)diff+=Math.PI*2;
-      rotY+=diff*0.03;
-    }
-
-    gl.viewport(0,0,SIZE,SIZE);
-    gl.clearColor(0,0,0,0);
-    gl.clear(gl.COLOR_BUFFER_BIT);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D,tex);
-    gl.uniform1i(uMap,0);
-    gl.uniform1f(uRot,rotY);
-    gl.uniform1f(uTime,t);
-    gl.uniform1f(uFade,fadeIn);
-    gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
-    requestAnimationFrame(render);
-  }
-  requestAnimationFrame(render);
-
-  return{
-    rotateToTarget:function(lonDeg){
-      // 経度を目的地の方向へ（正面に持ってくる）
-      targetRot=lonDeg*Math.PI/180;
-      spinning=false;
-    },
-    startSpin:function(){spinning=true;}
-  };
-})();
-
-// ============================================================
-// オープニング シーケンス
-// ============================================================
-window.addEventListener('load',function(){
-  // 0.4秒後にタイトル表示
-  setTimeout(function(){
-    document.getElementById('title-wrap').classList.add('visible');
-  },400);
-
-  // 0.8秒後に入力エリア表示
-  setTimeout(function(){
-    document.getElementById('input-area').classList.add('visible');
-    document.getElementById('status').textContent='ENTER DESTINATION';
-  },1400);
-});
-
-// ============================================================
-// 入力処理
-// ============================================================
-function onInput(){
-  var val=document.getElementById('dest-input').value.trim();
-  document.getElementById('send-btn').classList.toggle('show',val.length>0);
-}
-function onKey(e){
-  if(e.key==='Enter')onSubmit();
-}
-function onSubmit(){
-  var val=document.getElementById('dest-input').value.trim();
-  if(!val)return;
-  handleDestination(val);
-}
-
-// ============================================================
-// 目的地処理
-// ============================================================
-function handleDestination(dest){
-  document.getElementById('status').textContent='NAVIGATING TO: '+dest.toUpperCase();
-  document.getElementById('dest-input').blur();
-
-  // 地球儀を目的地方向へ回転（デモ：固定座標）
-  // 実際はGeocoding APIで経度を取得する
-  var demoLon=135.5; // 和歌山あたり
-  if(globe)globe.rotateToTarget(demoLon);
-
-  // 2秒後にズームイン演出（今後 Earth Studio動画と接続）
-  setTimeout(function(){
-    startZoomIn(dest);
-  },2200);
-}
-
-// ============================================================
-// ズームイン演出（フェーズ2への橋渡し）
-// ============================================================
-function startZoomIn(dest){
-  document.getElementById('status').textContent='ZOOMING IN...';
-
-  // 地球儀を拡大しながらフェードアウト → 次フェーズへ
-  var globeWrap=document.getElementById('globe-wrap');
-  var overlay=document.getElementById('zoom-overlay');
-  var inputArea=document.getElementById('input-area');
-  var titleWrap=document.getElementById('title-wrap');
-
-  // 入力エリア・タイトルをフェードアウト
-  inputArea.style.transition='opacity 0.5s';inputArea.style.opacity='0';
-  titleWrap.style.transition='opacity 0.5s';titleWrap.style.opacity='0';
-
-  // 地球儀を拡大
-  globeWrap.style.transition='transform 1.8s cubic-bezier(0.4,0,0.2,1)';
-  globeWrap.style.transform='scale(4)';
-
-  // オーバーレイをフェードイン（画面を黒に）
-  overlay.style.transition='opacity 1.2s ease 0.8s';
-  overlay.style.opacity='1';
-
-  // フェードアウト後にメッセージ表示（フェーズ2/3の接続点）
-  setTimeout(function(){
-    document.getElementById('status').innerHTML=
-      '[ '+dest.toUpperCase()+' ] — ROUTE CALCULATION IN PROGRESS';
-    // ここにフェーズ2（Earth Studio動画 or Maps API）を接続予定
-  },2200);
-}
-
-// ============================================================
-// 音声認識
-// ============================================================
-var recog=null,isListening=false;
-
-function toggleMic(){
-  if(isListening){stopMic();}
-  else{startMic();}
-}
-
-function startMic(){
-  var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-  if(!SR){alert('このブラウザは音声認識に対応していません');return;}
-  if(!recog){
-    recog=new SR();
-    recog.lang='ja-JP';
-    recog.continuous=false;
-    recog.interimResults=false;
-    recog.onresult=function(e){
-      var txt=e.results[0][0].transcript;
-      stopMicUI();
-      document.getElementById('dest-input').value=txt;
-      onInput();
-      setTimeout(function(){onSubmit();},400);
-    };
-    recog.onerror=function(e){stopMicUI();};
-    recog.onend=function(){stopMicUI();};
-  }
-  isListening=true;
-  document.getElementById('mic-btn').classList.add('listening');
-  document.getElementById('voice-overlay').classList.add('on');
-  try{recog.start();}catch(e){stopMicUI();}
-}
-
-function stopMic(){
-  if(recog)try{recog.abort();}catch(e){}
-  stopMicUI();
-}
-function stopMicUI(){
-  isListening=false;
-  document.getElementById('mic-btn').classList.remove('listening');
-  document.getElementById('voice-overlay').classList.remove('on');
-}
-</script>
-</body>
-</html>
+    uniform
