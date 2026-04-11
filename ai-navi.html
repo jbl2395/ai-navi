@@ -12,15 +12,12 @@
   *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
   html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:'Share Tech Mono',monospace;}
 
-  /* ===== 全体コンテナ ===== */
   #app{
     position:fixed;inset:0;
     display:flex;flex-direction:column;
     align-items:center;justify-content:center;
     background:#000;
   }
-
-  /* 星空なし・真っ黒背景 */
 
   /* ===== タイトル ===== */
   #title-wrap{
@@ -46,7 +43,6 @@
       0 0 60px rgba(0,120,255,0.4);
     position:relative;
   }
-  /* スキャンライン風装飾 */
   #title-main::before,#title-main::after{
     content:'';position:absolute;
     left:0;right:0;height:1px;
@@ -63,7 +59,7 @@
     text-transform:uppercase;
   }
 
-  /* ===== 地球儀キャンバス ===== */
+  /* ===== 地球儀 ===== */
   #globe-wrap{
     position:relative;z-index:5;
     width:min(60vw,60vh);
@@ -74,11 +70,8 @@
     width:100%;height:100%;
     display:block;
     border-radius:50%;
-    /* 外周グロー */
     filter:drop-shadow(0 0 30px rgba(0,150,255,0.5)) drop-shadow(0 0 60px rgba(0,100,255,0.3));
   }
-
-  /* 赤道リング装飾 */
   #globe-ring{
     position:absolute;inset:-6px;
     border-radius:50%;
@@ -121,43 +114,32 @@
   }
 
   #input-box{
-    display:flex;
-    align-items:center;
+    display:flex;align-items:center;
     background:rgba(255,255,255,0.06);
     border:1px solid rgba(0,200,255,0.35);
     border-radius:12px;
-    padding:12px 14px;
-    gap:10px;
-    box-shadow:0 0 20px rgba(0,150,255,0.15), inset 0 1px 0 rgba(255,255,255,0.05);
-    transition:border-color 0.3s, box-shadow 0.3s;
+    padding:12px 14px;gap:10px;
+    box-shadow:0 0 20px rgba(0,150,255,0.15),inset 0 1px 0 rgba(255,255,255,0.05);
+    transition:border-color 0.3s,box-shadow 0.3s;
   }
   #input-box:focus-within{
     border-color:rgba(0,200,255,0.7);
-    box-shadow:0 0 30px rgba(0,150,255,0.3), inset 0 1px 0 rgba(255,255,255,0.08);
+    box-shadow:0 0 30px rgba(0,150,255,0.3),inset 0 1px 0 rgba(255,255,255,0.08);
   }
 
   #dest-input{
-    flex:1;
-    background:transparent;
-    border:none;
-    outline:none;
-    font-size:16px;
-    color:#fff;
-    font-family:'Share Tech Mono',monospace;
-    letter-spacing:0.05em;
+    flex:1;background:transparent;border:none;outline:none;
+    font-size:16px;color:#fff;
+    font-family:'Share Tech Mono',monospace;letter-spacing:0.05em;
   }
   #dest-input::placeholder{color:rgba(255,255,255,0.3);}
 
-  /* マイクボタン */
   #mic-btn{
-    width:42px;height:42px;
-    border-radius:50%;
+    width:42px;height:42px;border-radius:50%;
     background:rgba(0,180,255,0.18);
     border:1.5px solid rgba(0,200,255,0.5);
     display:flex;align-items:center;justify-content:center;
-    flex-shrink:0;cursor:pointer;
-    transition:all 0.2s;
-    touch-action:manipulation;
+    flex-shrink:0;cursor:pointer;transition:all 0.2s;touch-action:manipulation;
   }
   #mic-btn:active{transform:scale(0.9);}
   #mic-btn.listening{
@@ -171,30 +153,24 @@
   }
   #mic-btn svg{width:20px;height:20px;}
 
-  /* 送信ボタン */
   #send-btn{
-    width:42px;height:42px;
-    border-radius:50%;
+    width:42px;height:42px;border-radius:50%;
     background:rgba(0,180,255,0.25);
     border:1.5px solid rgba(0,200,255,0.6);
-    display:none;
-    align-items:center;justify-content:center;
-    flex-shrink:0;cursor:pointer;
-    transition:all 0.2s;
-    touch-action:manipulation;
+    display:none;align-items:center;justify-content:center;
+    flex-shrink:0;cursor:pointer;transition:all 0.2s;touch-action:manipulation;
   }
   #send-btn.show{display:flex;}
   #send-btn:active{transform:scale(0.9);}
   #send-btn svg{width:18px;height:18px;}
 
-  /* ===== 音声認識インジケーター ===== */
+  /* ===== 音声認識 ===== */
   #voice-overlay{
     position:fixed;inset:0;z-index:100;
     background:rgba(0,0,10,0.7);
     display:none;flex-direction:column;
     align-items:center;justify-content:center;
-    gap:20px;
-    backdrop-filter:blur(6px);
+    gap:20px;backdrop-filter:blur(6px);
   }
   #voice-overlay.on{display:flex;}
   .voice-waves{display:flex;align-items:center;gap:6px;height:48px;}
@@ -205,45 +181,38 @@
   .vw:nth-child(4){height:32px;animation-delay:0.3s;}
   .vw:nth-child(5){height:18px;animation-delay:0.4s;}
   @keyframes wv{0%,100%{transform:scaleY(1);opacity:1;}50%{transform:scaleY(0.3);opacity:0.5;}}
-  #voice-txt{
-    font-family:'Orbitron',sans-serif;
-    font-size:14px;letter-spacing:0.2em;
-    color:rgba(0,200,255,0.9);
-  }
+  #voice-txt{font-family:'Orbitron',sans-serif;font-size:14px;letter-spacing:0.2em;color:rgba(0,200,255,0.9);}
   #voice-cancel{
     font-size:12px;color:rgba(255,255,255,0.5);
     background:rgba(255,255,255,0.07);
     border:1px solid rgba(255,255,255,0.12);
     border-radius:8px;padding:8px 20px;cursor:pointer;
-    font-family:'Share Tech Mono',monospace;
-    touch-action:manipulation;
+    font-family:'Share Tech Mono',monospace;touch-action:manipulation;
   }
 
-  /* ===== ステータステキスト ===== */
+  /* ===== ステータス ===== */
   #status{
     position:fixed;bottom:calc(env(safe-area-inset-bottom,0px) + 20px);
     left:0;right:0;text-align:center;
     font-size:11px;letter-spacing:0.2em;
-    color:rgba(0,200,255,0.45);
-    z-index:10;
+    color:rgba(0,200,255,0.45);z-index:10;
     font-family:'Share Tech Mono',monospace;
   }
 
-  /* ===== 回転アニメーション後の演出用 ===== */
+  /* ===== ズームオーバーレイ ===== */
   #zoom-overlay{
     position:fixed;inset:0;z-index:50;
-    background:radial-gradient(ellipse at center, transparent 30%, #000 100%);
-    pointer-events:none;
-    opacity:0;
-    transition:opacity 0.5s;
+    background:radial-gradient(ellipse at center,transparent 30%,#000 100%);
+    pointer-events:none;opacity:0;transition:opacity 0.5s;
   }
 
   /* ===== 設定ボタン（目立たない） ===== */
   #sett-btn{
-    position:fixed;top:calc(env(safe-area-inset-top,0px)+14px);right:16px;
+    position:fixed;
+    top:calc(env(safe-area-inset-top,0px) + 14px);
+    right:16px;
     z-index:200;
-    width:36px;height:36px;
-    border-radius:50%;
+    width:36px;height:36px;border-radius:50%;
     background:rgba(255,255,255,0.06);
     border:1px solid rgba(255,255,255,0.1);
     display:flex;align-items:center;justify-content:center;
@@ -260,19 +229,17 @@
   #sett-bg{
     position:fixed;inset:0;z-index:300;
     background:rgba(0,0,0,0.6);
-    display:none;
-    backdrop-filter:blur(4px);
+    display:none;backdrop-filter:blur(4px);
   }
   #sett-bg.on{display:block;}
 
-  /* ===== 設定パネル本体 ===== */
+  /* ===== 設定パネル ===== */
   #sett-panel{
     position:fixed;bottom:0;left:0;right:0;z-index:301;
     background:#080c14;
     border-top:1px solid rgba(0,200,255,0.2);
     border-radius:20px 20px 0 0;
-    max-height:88vh;
-    overflow-y:auto;
+    max-height:88vh;overflow-y:auto;
     -webkit-overflow-scrolling:touch;
     padding-bottom:calc(env(safe-area-inset-bottom,0px)+20px);
     transform:translateY(100%);
@@ -281,99 +248,71 @@
   #sett-panel.on{transform:translateY(0);}
 
   .sett-handle{
-    width:36px;height:4px;
-    background:rgba(255,255,255,0.15);
-    border-radius:2px;
-    margin:14px auto 0;
+    width:36px;height:4px;background:rgba(255,255,255,0.15);
+    border-radius:2px;margin:14px auto 0;
   }
   .sett-header{
-    font-family:'Orbitron',sans-serif;
-    font-size:15px;font-weight:700;
-    color:rgba(0,200,255,0.9);
-    letter-spacing:0.15em;
+    font-family:'Orbitron',sans-serif;font-size:15px;font-weight:700;
+    color:rgba(0,200,255,0.9);letter-spacing:0.15em;
     padding:16px 18px 14px;
     border-bottom:1px solid rgba(255,255,255,0.06);
   }
 
-  /* セクション */
   .sett-sec{padding:16px 18px 4px;}
   .sett-sec-ttl{
     font-size:10px;font-weight:600;
-    color:rgba(0,200,255,0.5);
-    letter-spacing:0.18em;
-    margin-bottom:12px;
-    text-transform:uppercase;
+    color:rgba(0,200,255,0.5);letter-spacing:0.18em;
+    margin-bottom:12px;text-transform:uppercase;
   }
 
-  /* 行 */
   .sett-row{
     display:flex;align-items:center;
-    padding:10px 0;
+    padding:10px 0;gap:10px;
     border-bottom:1px solid rgba(255,255,255,0.04);
-    gap:10px;
   }
   .sett-row:last-child{border-bottom:none;}
   .sett-lbl{flex:1;}
   .sett-lbl-main{font-size:14px;color:rgba(255,255,255,0.85);}
   .sett-lbl-sub{font-size:11px;color:rgba(255,255,255,0.3);margin-top:2px;}
 
-  /* トグルスイッチ */
+  /* トグル */
   .tog{
-    width:44px;height:26px;
-    border-radius:13px;
+    width:44px;height:26px;border-radius:13px;
     background:rgba(255,255,255,0.12);
     position:relative;cursor:pointer;
-    transition:background 0.2s;flex-shrink:0;
-    touch-action:manipulation;
+    transition:background 0.2s;flex-shrink:0;touch-action:manipulation;
   }
   .tog.on{background:rgba(0,200,255,0.7);}
   .tog::after{
-    content:'';position:absolute;
-    top:3px;left:3px;
-    width:20px;height:20px;
-    border-radius:50%;background:#fff;
-    transition:transform 0.2s;
-    box-shadow:0 1px 4px rgba(0,0,0,0.4);
+    content:'';position:absolute;top:3px;left:3px;
+    width:20px;height:20px;border-radius:50%;background:#fff;
+    transition:transform 0.2s;box-shadow:0 1px 4px rgba(0,0,0,0.4);
   }
   .tog.on::after{transform:translateX(18px);}
 
-  /* APIキー入力行 */
-  .api-row{
-    display:flex;align-items:center;
-    padding:8px 0;
-    border-bottom:1px solid rgba(255,255,255,0.04);
-    gap:8px;flex-wrap:wrap;
-  }
+  /* APIキー行 */
+  .api-row{padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.04);}
   .api-row:last-child{border-bottom:none;}
-  .api-lbl{
-    font-size:13px;color:rgba(255,255,255,0.7);
-    width:100%;margin-bottom:4px;
-  }
-  .api-inp-wrap{display:flex;align-items:center;gap:8px;width:100%;}
+  .api-lbl{font-size:12px;color:rgba(255,255,255,0.55);margin-bottom:6px;}
+  .api-inp-wrap{display:flex;align-items:center;gap:8px;}
   .api-inp{
-    flex:1;
-    background:rgba(255,255,255,0.05);
-    border:1px solid rgba(255,255,255,0.1);
-    border-radius:8px;
-    padding:9px 12px;
-    color:#fff;font-size:12px;
-    font-family:'Share Tech Mono',monospace;
-    outline:none;
+    flex:1;background:rgba(255,255,255,0.05);
+    border:1px solid rgba(255,255,255,0.1);border-radius:8px;
+    padding:9px 12px;color:#fff;font-size:12px;
+    font-family:'Share Tech Mono',monospace;outline:none;
   }
   .api-inp:focus{border-color:rgba(0,200,255,0.5);}
   .api-inp::placeholder{color:rgba(255,255,255,0.2);}
 
-  /* 選択ボタン群 */
+  /* 選択ボタン */
   .sel-btns{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;}
   .sel-btn{
-    padding:7px 12px;
-    border-radius:8px;
+    padding:7px 12px;border-radius:8px;
     font-size:12px;font-weight:600;
     border:1.5px solid rgba(255,255,255,0.1);
     color:rgba(255,255,255,0.4);
     background:rgba(255,255,255,0.04);
-    cursor:pointer;touch-action:manipulation;
-    transition:all 0.15s;
+    cursor:pointer;touch-action:manipulation;transition:all 0.15s;
   }
   .sel-btn.sel{
     border-color:rgba(0,200,255,0.7);
@@ -384,10 +323,8 @@
 
   /* 場所リスト */
   .place-item{
-    display:flex;align-items:center;
-    padding:10px 0;
-    border-bottom:1px solid rgba(255,255,255,0.04);
-    gap:10px;
+    display:flex;align-items:center;padding:10px 0;
+    border-bottom:1px solid rgba(255,255,255,0.04);gap:10px;
   }
   .place-item:last-child{border-bottom:none;}
   .place-info{flex:1;}
@@ -405,32 +342,11 @@
     width:100%;padding:11px;margin-top:8px;
     background:rgba(0,200,255,0.08);
     border:1px dashed rgba(0,200,255,0.25);
-    border-radius:10px;
-    color:rgba(0,200,255,0.6);
-    font-size:13px;cursor:pointer;
-    touch-action:manipulation;
+    border-radius:10px;color:rgba(0,200,255,0.6);
+    font-size:13px;cursor:pointer;touch-action:manipulation;
     font-family:'Share Tech Mono',monospace;
   }
   .add-place-btn:active{background:rgba(0,200,255,0.15);}
-
-  .sett-pad{height:20px;}
-
-  /* 保存ボタン */
-  .sett-save-btn{
-    width:calc(100% - 36px);
-    margin:12px 18px 0;
-    padding:13px;
-    background:rgba(0,200,255,0.18);
-    border:1px solid rgba(0,200,255,0.4);
-    border-radius:11px;
-    color:rgba(0,200,255,0.9);
-    font-size:14px;font-weight:600;
-    letter-spacing:0.1em;
-    cursor:pointer;touch-action:manipulation;
-    font-family:'Orbitron',sans-serif;
-    transition:all 0.15s;
-  }
-  .sett-save-btn:active{background:rgba(0,200,255,0.28);}
 
   /* テーマカラー */
   .theme-btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;}
@@ -447,26 +363,34 @@
     color:#fff;font-size:14px;font-weight:800;
     text-shadow:0 1px 3px rgba(0,0,0,0.8);
   }
+
+  /* 保存ボタン */
+  .sett-save-btn{
+    width:calc(100% - 36px);margin:12px 18px 0;padding:13px;
+    background:rgba(0,200,255,0.18);
+    border:1px solid rgba(0,200,255,0.4);border-radius:11px;
+    color:rgba(0,200,255,0.9);font-size:14px;font-weight:600;
+    letter-spacing:0.1em;cursor:pointer;touch-action:manipulation;
+    font-family:'Orbitron',sans-serif;transition:all 0.15s;
+  }
+  .sett-save-btn:active{background:rgba(0,200,255,0.28);}
+  .sett-pad{height:20px;}
 </style>
 </head>
 <body>
 
-
 <div id="app">
-  <!-- タイトル -->
   <div id="title-wrap">
     <div id="title-main">AI NAVIGATION SYSTEM</div>
     <div id="title-sub">POWERED BY GEMINI</div>
   </div>
 
-  <!-- 地球儀 -->
   <div id="globe-wrap">
     <canvas id="globe-canvas"></canvas>
     <div id="globe-ring"></div>
     <div id="globe-ring2"></div>
   </div>
 
-  <!-- 入力エリア -->
   <div id="input-area">
     <div id="input-label">どこへ行きますか？</div>
     <div id="input-box">
@@ -503,7 +427,7 @@
 <div id="status">SYSTEM READY</div>
 <div id="zoom-overlay"></div>
 
-<!-- 設定ボタン（目立たない歯車） -->
+<!-- 設定ボタン -->
 <button id="sett-btn" onclick="openSett()">
   <svg viewBox="0 0 24 24" fill="none" stroke="rgba(0,200,255,0.8)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
     <circle cx="12" cy="12" r="3"/>
@@ -511,7 +435,7 @@
   </svg>
 </button>
 
-<!-- 設定パネル背景 -->
+<!-- 設定背景 -->
 <div id="sett-bg" onclick="closeSett()"></div>
 
 <!-- 設定パネル -->
@@ -522,7 +446,6 @@
   <!-- APIキー -->
   <div class="sett-sec">
     <div class="sett-sec-ttl">🔑 APIキー</div>
-
     <div class="api-row">
       <div class="api-lbl">Google Maps API</div>
       <div class="api-inp-wrap">
@@ -530,7 +453,6 @@
         <div class="tog" id="tog-maps" onclick="toggleApi('maps')"></div>
       </div>
     </div>
-
     <div class="api-row">
       <div class="api-lbl">Gemini API</div>
       <div class="api-inp-wrap">
@@ -538,7 +460,6 @@
         <div class="tog" id="tog-gemini" onclick="toggleApi('gemini')"></div>
       </div>
     </div>
-
     <div class="api-row">
       <div class="api-lbl">ElevenLabs API</div>
       <div class="api-inp-wrap">
@@ -551,7 +472,6 @@
   <!-- 音声設定 -->
   <div class="sett-sec">
     <div class="sett-sec-ttl">🔊 音声設定</div>
-
     <div class="sett-row">
       <div class="sett-lbl">
         <div class="sett-lbl-main">音声案内</div>
@@ -559,7 +479,6 @@
       </div>
       <div class="tog on" id="tog-voice" onclick="toggleSett('voice')"></div>
     </div>
-
     <div class="sett-row" style="flex-direction:column;align-items:flex-start;">
       <div class="sett-lbl-main" style="margin-bottom:6px;">音声エンジン</div>
       <div class="sel-btns">
@@ -568,12 +487,10 @@
         <button class="sel-btn" id="eng-eleven" onclick="setEngine('eleven')">ElevenLabs</button>
       </div>
     </div>
-
     <div class="sett-row" style="flex-direction:column;align-items:flex-start;">
       <div class="sett-lbl-main" style="margin-bottom:6px;">声の種類</div>
-      <div id="voice-list" style="width:100%;"></div>
+      <div id="voice-list" style="width:100%;display:flex;flex-wrap:wrap;gap:6px;"></div>
     </div>
-
     <div class="sett-row" style="flex-direction:column;align-items:flex-start;">
       <div class="sett-lbl-main" style="margin-bottom:6px;">話す速度</div>
       <div class="sel-btns">
@@ -587,7 +504,6 @@
   <!-- ナビ設定 -->
   <div class="sett-sec">
     <div class="sett-sec-ttl">🗺 ナビ設定</div>
-
     <div class="sett-row" style="flex-direction:column;align-items:flex-start;">
       <div class="sett-lbl-main" style="margin-bottom:6px;">ルート優先</div>
       <div class="sel-btns">
@@ -596,7 +512,6 @@
         <button class="sel-btn sel" id="route-ask" onclick="setRoute('ask')">❓ 毎回聞く</button>
       </div>
     </div>
-
     <div class="sett-row" style="flex-direction:column;align-items:flex-start;">
       <div class="sett-lbl-main" style="margin-bottom:6px;">距離単位</div>
       <div class="sel-btns">
@@ -604,7 +519,6 @@
         <button class="sel-btn" id="unit-mi" onclick="setUnit('mi')">マイル</button>
       </div>
     </div>
-
     <div class="sett-row" style="flex-direction:column;align-items:flex-start;">
       <div class="sett-lbl-main" style="margin-bottom:6px;">案内タイミング</div>
       <div class="sel-btns">
@@ -618,18 +532,15 @@
   <!-- 表示設定 -->
   <div class="sett-sec">
     <div class="sett-sec-ttl">🎨 表示設定</div>
-
     <div class="sett-row">
       <div class="sett-lbl">
         <div class="sett-lbl-main">地図の向き</div>
-        <div class="sett-lbl-sub">進行方向 / 北固定</div>
       </div>
       <div class="sel-btns">
         <button class="sel-btn sel" id="map-heading" onclick="setMapDir('heading')">進行方向</button>
         <button class="sel-btn" id="map-north" onclick="setMapDir('north')">北固定</button>
       </div>
     </div>
-
     <div class="sett-row">
       <div class="sett-lbl">
         <div class="sett-lbl-main">夜間モード自動切替</div>
@@ -637,7 +548,6 @@
       </div>
       <div class="tog on" id="tog-night" onclick="toggleSett('night')"></div>
     </div>
-
     <div class="sett-row" style="flex-direction:column;align-items:flex-start;">
       <div class="sett-lbl-main" style="margin-bottom:8px;">テーマカラー</div>
       <div class="theme-btns" id="theme-btns"></div>
@@ -678,4 +588,449 @@ var globe=(function(){
     uniform sampler2D u_map;
     uniform float u_rot;
     uniform float u_time;
-    uniform
+    uniform float u_fade;
+
+    float hash(vec2 p){
+      p=fract(p*vec2(127.1,311.7));
+      p+=dot(p,p+19.19);
+      return fract(p.x*p.y);
+    }
+    float noise(vec2 p){
+      vec2 i=floor(p),f=fract(p);
+      vec2 u=f*f*(3.0-2.0*f);
+      return mix(mix(hash(i),hash(i+vec2(1,0)),u.x),
+                 mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),u.x),u.y);
+    }
+    float fbm(vec2 p){
+      float v=0.0,a=0.5;
+      for(int i=0;i<4;i++){v+=noise(p)*a;p*=2.1;a*=0.5;}
+      return v;
+    }
+
+    void main(){
+      vec2 dc=(v_uv-0.5)*2.0;
+      float dist=length(dc);
+      if(dist>1.04){gl_FragColor=vec4(0.0,0.0,0.0,0.0);return;}
+      if(dist>1.0){
+        float rim=1.0-(dist-1.0)/0.04;
+        rim=pow(clamp(rim,0.0,1.0),1.5);
+        vec3 atmCol=mix(vec3(0.15,0.5,1.0),vec3(0.4,0.78,1.0),rim);
+        gl_FragColor=vec4(atmCol,rim*0.9*u_fade);
+        return;
+      }
+      vec2 sph=dc;
+      float z=sqrt(max(0.0,1.0-dot(sph,sph)));
+      vec3 n=normalize(vec3(sph.x,sph.y,z));
+      float lat=atan(n.y,length(n.xz));
+      float lon=atan(n.x,n.z)+u_rot;
+      float tu=fract(lon/6.2832+0.5);
+      float tv=1.0-(lat/3.14159+0.5);
+      vec4 mapCol=texture2D(u_map,vec2(tu,tv));
+      float isLand=mapCol.r;
+      float oceanDepth=fbm(vec2(tu,tv)*4.0+vec2(2.1,1.3));
+      vec3 oceanCol=mix(vec3(0.01,0.05,0.40),vec3(0.04,0.20,0.72),oceanDepth*0.9);
+      float terrain=fbm(vec2(tu,tv)*7.0+vec2(5.1,3.7))*0.35+0.65;
+      vec3 landCol=mix(vec3(0.05,0.15,0.45),vec3(0.10,0.28,0.62),terrain);
+      float polar=smoothstep(0.80,0.94,abs(tv-0.5)*2.0);
+      vec3 polarCol=vec3(0.78,0.90,1.0);
+      vec3 col=mix(oceanCol,landCol,isLand);
+      col=mix(col,polarCol,polar);
+      float cloud=fbm(vec2(tu+u_time*0.003,tv)*5.0+vec2(1.1,2.2));
+      cloud=smoothstep(0.54,0.68,cloud)*(1.0-polar*0.5);
+      col=mix(col,vec3(0.82,0.92,1.0),cloud*0.65);
+      vec3 light=normalize(vec3(-0.5,0.4,0.8));
+      float diff=clamp(dot(n,light),0.0,1.0);
+      col*=(0.22+diff*0.78);
+      float rim=pow(1.0-z,4.0);
+      col+=vec3(0.04,0.18,0.60)*rim*0.9;
+      float nightFactor=clamp(-dot(n,light)*2.5,0.0,1.0);
+      float city=fbm(vec2(tu,tv)*14.0)*0.5;
+      city=step(0.64,city)*isLand*(1.0-polar);
+      col+=vec3(0.55,0.75,1.0)*city*nightFactor*0.45;
+      gl_FragColor=vec4(col,u_fade);
+    }
+  `;
+
+  function mkShader(type,src){
+    var s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);
+    if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)){console.error(gl.getShaderInfoLog(s));return null;}
+    return s;
+  }
+  var vs=mkShader(gl.VERTEX_SHADER,VS),fs=mkShader(gl.FRAGMENT_SHADER,FS);
+  if(!vs||!fs)return null;
+  var prog=gl.createProgram();
+  gl.attachShader(prog,vs);gl.attachShader(prog,fs);gl.linkProgram(prog);
+  gl.useProgram(prog);
+
+  var buf=gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
+  var ap=gl.getAttribLocation(prog,'a_pos');
+  gl.enableVertexAttribArray(ap);
+  gl.vertexAttribPointer(ap,2,gl.FLOAT,false,0,0);
+
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
+
+  var uRot=gl.getUniformLocation(prog,'u_rot');
+  var uTime=gl.getUniformLocation(prog,'u_time');
+  var uFade=gl.getUniformLocation(prog,'u_fade');
+  var uMap=gl.getUniformLocation(prog,'u_map');
+
+  // ---- Canvas2D で大陸マップ生成 → Uint8Array で渡す（Safari対応） ----
+  var MAP_W=1024,MAP_H=512;
+  var mapCanvas=document.createElement('canvas');
+  mapCanvas.width=MAP_W;mapCanvas.height=MAP_H;
+  var mc=mapCanvas.getContext('2d');
+  mc.fillStyle='#000';
+  mc.fillRect(0,0,MAP_W,MAP_H);
+  mc.fillStyle='#fff';
+
+  function ll(lon,lat){return[(lon+180)/360*MAP_W,(90-lat)/180*MAP_H];}
+  function poly(pts){
+    mc.beginPath();
+    var p0=ll(pts[0][0],pts[0][1]);
+    mc.moveTo(p0[0],p0[1]);
+    for(var i=1;i<pts.length;i++){var p=ll(pts[i][0],pts[i][1]);mc.lineTo(p[0],p[1]);}
+    mc.closePath();mc.fill();
+  }
+
+  // ユーラシア大陸
+  poly([[-9,71],[20,78],[40,72],[60,73],[80,73],[100,68],[110,60],[120,55],[130,48],[135,40],[136,34],[130,28],[120,22],[108,18],[100,10],[100,2],[104,-2],[108,2],[110,8],[120,22],[124,14],[118,6],[112,2],[108,2],[100,10],[92,8],[82,10],[72,14],[64,22],[58,24],[46,14],[40,12],[34,20],[30,28],[24,36],[16,40],[8,44],[2,44],[-2,44],[-6,38],[-8,36],[-8,44],[-2,52],[4,54],[8,58],[14,64],[20,68],[28,70],[-9,71]]);
+  poly([[4,58],[8,62],[14,66],[20,70],[26,70],[28,64],[22,58],[14,56],[8,56],[4,58]]);
+  poly([[-5,50],[-3,52],[-2,54],[0,58],[-2,58],[-4,56],[-6,56],[-5,50]]);
+  // アフリカ
+  poly([[-6,36],[2,36],[10,38],[18,38],[32,30],[40,22],[44,12],[44,2],[40,-4],[36,-18],[28,-34],[22,-34],[16,-28],[12,-18],[10,-8],[8,4],[4,6],[2,8],[-4,6],[-12,8],[-16,12],[-18,14],[-16,20],[-18,28],[-14,32],[-6,36]]);
+  poly([[44,-12],[50,-14],[50,-22],[46,-26],[44,-22],[44,-12]]);
+  // 北アメリカ
+  poly([[-168,68],[-140,60],[-128,50],[-124,38],[-118,34],[-96,18],[-86,14],[-84,10],[-78,8],[-76,8],[-72,10],[-68,12],[-64,18],[-60,24],[-60,34],[-66,44],[-70,46],[-68,48],[-62,46],[-60,46],[-64,48],[-68,52],[-72,56],[-78,62],[-86,66],[-92,70],[-100,70],[-120,70],[-140,70],[-160,70],[-168,68]]);
+  poly([[-44,76],[-20,70],[-18,76],[-26,84],[-46,84],[-54,80],[-44,76]]);
+  // 南アメリカ
+  poly([[-80,10],[-72,-2],[-64,-8],[-52,-4],[-46,-14],[-40,-22],[-44,-34],[-66,-56],[-68,-52],[-62,-38],[-56,-28],[-52,-18],[-64,-4],[-72,2],[-76,8],[-80,10]]);
+  // オーストラリア
+  poly([[114,-22],[122,-18],[130,-14],[138,-12],[148,-18],[154,-26],[152,-36],[144,-38],[136,-34],[128,-32],[120,-30],[114,-26],[114,-22]]);
+  poly([[144,-40],[148,-42],[146,-44],[144,-42],[144,-40]]);
+  poly([[172,-36],[178,-38],[176,-42],[172,-40],[172,-36]]);
+  poly([[168,-44],[174,-44],[172,-46],[168,-46],[166,-44],[168,-44]]);
+  // 日本列島
+  poly([[130,31],[131,32],[132,34],[133,34],[134,34],[135,34],[136,36],[137,36],[138,38],[139,40],[140,40],[141,41],[141,40],[140,38],[138,36],[136,34],[135,34],[134,32],[132,32],[130,31]]);
+  poly([[140,42],[142,44],[144,44],[145,44],[145,42],[142,42],[140,42]]);
+  poly([[130,32],[132,32],[132,30],[130,30],[130,32]]);
+  poly([[132,34],[134,34],[134,32],[132,32],[132,34]]);
+  // その他島嶼
+  poly([[120,22],[122,24],[122,22],[120,22]]);
+  poly([[118,16],[122,18],[124,14],[120,12],[118,16]]);
+  poly([[108,6],[118,6],[118,2],[114,-2],[108,2],[108,6]]);
+  poly([[96,4],[106,2],[108,-6],[104,-6],[96,4]]);
+  poly([[106,-6],[114,-8],[112,-8],[106,-8],[106,-6]]);
+  poly([[80,8],[82,8],[82,6],[80,6],[80,8]]);
+  poly([[-24,64],[-14,66],[-14,64],[-18,62],[-24,64]]);
+
+  // ★ Safari対応：Uint8Arrayで渡す
+  var pixels=mc.getImageData(0,0,MAP_W,MAP_H).data;
+  var tex=gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D,tex);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,MAP_W,MAP_H,0,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.REPEAT);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+
+  var rotY=0,targetRot=0,spinning=true;
+  var startTime=performance.now();
+
+  function render(){
+    var t=(performance.now()-startTime)/1000;
+    var fadeIn=Math.min(1,t/1.5);
+    if(spinning){rotY+=0.004;}
+    else{
+      var diff=targetRot-rotY;
+      while(diff>Math.PI)diff-=Math.PI*2;
+      while(diff<-Math.PI)diff+=Math.PI*2;
+      rotY+=diff*0.03;
+    }
+    gl.viewport(0,0,SIZE,SIZE);
+    gl.clearColor(0,0,0,0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D,tex);
+    gl.uniform1i(uMap,0);
+    gl.uniform1f(uRot,rotY);
+    gl.uniform1f(uTime,t);
+    gl.uniform1f(uFade,fadeIn);
+    gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+    requestAnimationFrame(render);
+  }
+  requestAnimationFrame(render);
+
+  return{
+    rotateToTarget:function(lonDeg){
+      targetRot=lonDeg*Math.PI/180;
+      spinning=false;
+    },
+    startSpin:function(){spinning=true;}
+  };
+})();
+
+// ============================================================
+// オープニング シーケンス
+// ============================================================
+window.addEventListener('load',function(){
+  setTimeout(function(){
+    document.getElementById('title-wrap').classList.add('visible');
+  },400);
+  setTimeout(function(){
+    document.getElementById('input-area').classList.add('visible');
+    document.getElementById('status').textContent='ENTER DESTINATION';
+  },1400);
+});
+
+// ============================================================
+// 入力処理
+// ============================================================
+function onInput(){
+  var val=document.getElementById('dest-input').value.trim();
+  document.getElementById('send-btn').classList.toggle('show',val.length>0);
+}
+function onKey(e){if(e.key==='Enter')onSubmit();}
+function onSubmit(){
+  var val=document.getElementById('dest-input').value.trim();
+  if(!val)return;
+  handleDestination(val);
+}
+
+// ============================================================
+// 目的地処理
+// ============================================================
+function handleDestination(dest){
+  document.getElementById('status').textContent='NAVIGATING TO: '+dest.toUpperCase();
+  document.getElementById('dest-input').blur();
+  var demoLon=135.5;
+  if(globe)globe.rotateToTarget(demoLon);
+  setTimeout(function(){startZoomIn(dest);},2200);
+}
+
+function startZoomIn(dest){
+  document.getElementById('status').textContent='ZOOMING IN...';
+  var globeWrap=document.getElementById('globe-wrap');
+  var overlay=document.getElementById('zoom-overlay');
+  var inputArea=document.getElementById('input-area');
+  var titleWrap=document.getElementById('title-wrap');
+  inputArea.style.transition='opacity 0.5s';inputArea.style.opacity='0';
+  titleWrap.style.transition='opacity 0.5s';titleWrap.style.opacity='0';
+  globeWrap.style.transition='transform 1.8s cubic-bezier(0.4,0,0.2,1)';
+  globeWrap.style.transform='scale(4)';
+  overlay.style.transition='opacity 1.2s ease 0.8s';
+  overlay.style.opacity='1';
+  setTimeout(function(){
+    document.getElementById('status').innerHTML='[ '+dest.toUpperCase()+' ] — ROUTE CALCULATION IN PROGRESS';
+  },2200);
+}
+
+// ============================================================
+// 音声認識
+// ============================================================
+var recog=null,isListening=false;
+function toggleMic(){if(isListening)stopMic();else startMic();}
+function startMic(){
+  var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){alert('このブラウザは音声認識に対応していません');return;}
+  if(!recog){
+    recog=new SR();recog.lang='ja-JP';recog.continuous=false;recog.interimResults=false;
+    recog.onresult=function(e){
+      var txt=e.results[0][0].transcript;
+      stopMicUI();
+      document.getElementById('dest-input').value=txt;
+      onInput();
+      setTimeout(function(){onSubmit();},400);
+    };
+    recog.onerror=function(){stopMicUI();};
+    recog.onend=function(){stopMicUI();};
+  }
+  isListening=true;
+  document.getElementById('mic-btn').classList.add('listening');
+  document.getElementById('voice-overlay').classList.add('on');
+  try{recog.start();}catch(e){stopMicUI();}
+}
+function stopMic(){if(recog)try{recog.abort();}catch(e){}stopMicUI();}
+function stopMicUI(){
+  isListening=false;
+  document.getElementById('mic-btn').classList.remove('listening');
+  document.getElementById('voice-overlay').classList.remove('on');
+}
+
+// ============================================================
+// 設定 ストレージ
+// ============================================================
+function loadSt(){try{return JSON.parse(localStorage.getItem('ainavi_sett')||'{}');}catch(e){return{};}}
+function saveSt(d){var s=Object.assign(loadSt(),d);localStorage.setItem('ainavi_sett',JSON.stringify(s));}
+
+// ============================================================
+// 設定パネル 開閉
+// ============================================================
+function openSett(){
+  initSettPanel();
+  document.getElementById('sett-bg').classList.add('on');
+  document.getElementById('sett-panel').classList.add('on');
+}
+function closeSett(){
+  document.getElementById('sett-bg').classList.remove('on');
+  document.getElementById('sett-panel').classList.remove('on');
+}
+
+// ============================================================
+// 設定パネル 初期化
+// ============================================================
+function initSettPanel(){
+  var s=loadSt();
+  if(s.mapsKey)document.getElementById('inp-maps').value=s.mapsKey;
+  if(s.geminiKey)document.getElementById('inp-gemini').value=s.geminiKey;
+  if(s.elevenKey)document.getElementById('inp-eleven').value=s.elevenKey;
+  document.getElementById('tog-maps').classList.toggle('on',!!s.mapsOn);
+  document.getElementById('tog-gemini').classList.toggle('on',!!s.geminiOn);
+  document.getElementById('tog-eleven').classList.toggle('on',!!s.elevenOn);
+  document.getElementById('tog-voice').classList.toggle('on',s.voice!==false);
+  document.getElementById('tog-night').classList.toggle('on',s.night!==false);
+  setEngine(s.engine||'browser',true);
+  setSpeed(s.speed||'normal',true);
+  setRoute(s.route||'ask',true);
+  setUnit(s.unit||'km',true);
+  setTiming(s.timing||'500',true);
+  setMapDir(s.mapDir||'heading',true);
+  renderVoiceList(s);
+  renderThemeBtns(s);
+  renderPlaces();
+}
+
+// APIトグル
+function toggleApi(key){
+  var s=loadSt();
+  var map={maps:'mapsOn',gemini:'geminiOn',eleven:'elevenOn'};
+  s[map[key]]=!s[map[key]];
+  saveSt(s);
+  document.getElementById('tog-'+key).classList.toggle('on',s[map[key]]);
+}
+
+// 汎用トグル
+function toggleSett(key){
+  var s=loadSt();
+  var cur=s[key]!==false;
+  s[key]=!cur;
+  saveSt(s);
+  var ids={voice:'tog-voice',night:'tog-night'};
+  document.getElementById(ids[key]).classList.toggle('on',s[key]);
+}
+
+// 音声エンジン
+function setEngine(val,silent){
+  ['browser','google','eleven'].forEach(function(e){
+    document.getElementById('eng-'+e).classList.toggle('sel',e===val);
+  });
+  if(!silent)saveSt({engine:val});
+  renderVoiceList(loadSt());
+}
+
+// 声リスト
+var availVoices=[];
+function renderVoiceList(s){
+  var list=document.getElementById('voice-list');
+  if(!list)return;
+  var voices=window.speechSynthesis?window.speechSynthesis.getVoices().filter(function(v){return v.lang.startsWith('ja');}):[];
+  availVoices=voices;
+  if(!voices.length){list.innerHTML='<span style="font-size:12px;color:rgba(255,255,255,0.3);">読み込み中...</span>';return;}
+  var cur=s.voiceIdx||0;
+  list.innerHTML=voices.slice(0,6).map(function(v,i){
+    return '<button class="sel-btn'+(i===cur?' sel':'')+'" onclick="setVoice('+i+')">'+v.name.replace(/Microsoft |Google /,'').slice(0,14)+'</button>';
+  }).join('');
+}
+function setVoice(i){saveSt({voiceIdx:i});renderVoiceList(loadSt());}
+if(window.speechSynthesis)window.speechSynthesis.onvoiceschanged=function(){renderVoiceList(loadSt());};
+
+// 速度
+function setSpeed(val,silent){
+  ['slow','normal','fast'].forEach(function(s){document.getElementById('spd-'+s).classList.toggle('sel',s===val);});
+  if(!silent)saveSt({speed:val});
+}
+
+// ルート・単位・タイミング・地図向き
+function setRoute(val,silent){
+  ['highway','normal','ask'].forEach(function(r){document.getElementById('route-'+r).classList.toggle('sel',r===val);});
+  if(!silent)saveSt({route:val});
+}
+function setUnit(val,silent){
+  ['km','mi'].forEach(function(u){document.getElementById('unit-'+u).classList.toggle('sel',u===val);});
+  if(!silent)saveSt({unit:val});
+}
+function setTiming(val,silent){
+  ['300','500','1000'].forEach(function(t){document.getElementById('timing-'+t).classList.toggle('sel',t===val);});
+  if(!silent)saveSt({timing:val});
+}
+function setMapDir(val,silent){
+  ['heading','north'].forEach(function(d){document.getElementById('map-'+d).classList.toggle('sel',d===val);});
+  if(!silent)saveSt({mapDir:val});
+}
+
+// テーマカラー
+var THEMES=[
+  {n:'シアン',c:'linear-gradient(135deg,#006080,#00c8ff)'},
+  {n:'ブルー',c:'linear-gradient(135deg,#003080,#3278ff)'},
+  {n:'パープル',c:'linear-gradient(135deg,#3a0080,#a03cff)'},
+  {n:'グリーン',c:'linear-gradient(135deg,#004030,#00dc78)'},
+  {n:'オレンジ',c:'linear-gradient(135deg,#804000,#ff8c00)'},
+  {n:'レッド',c:'linear-gradient(135deg,#800020,#ff3c50)'},
+];
+function renderThemeBtns(s){
+  var cur=s.themeIdx||0;
+  document.getElementById('theme-btns').innerHTML=THEMES.map(function(t,i){
+    return '<button class="theme-btn'+(i===cur?' sel':'')+'" style="background:'+t.c+';" title="'+t.n+'" onclick="setTheme('+i+')"></button>';
+  }).join('');
+}
+function setTheme(i){saveSt({themeIdx:i});renderThemeBtns(loadSt());}
+
+// 登録場所
+function renderPlaces(){
+  var places=loadSt().places||[];
+  var el=document.getElementById('places-list');
+  if(!places.length){
+    el.innerHTML='<div style="font-size:12px;color:rgba(255,255,255,0.25);padding:8px 0;">まだ登録されていません</div>';
+    return;
+  }
+  el.innerHTML=places.map(function(p,i){
+    return '<div class="place-item"><div class="place-info"><div class="place-name">'+(p.isHome?'🏠 ':'📌 ')+p.name+'</div><div class="place-addr">'+p.addr+'</div></div><div class="place-btns"><button class="place-edit-btn" onclick="editPlace('+i+')">編集</button><button class="place-del-btn" onclick="delPlace('+i+')">削除</button></div></div>';
+  }).join('');
+}
+function addPlace(){
+  var name=prompt('場所の名前（例：家、会社）');if(!name)return;
+  var addr=prompt('住所または施設名');if(!addr)return;
+  var places=loadSt().places||[];
+  places.push({name:name,addr:addr,isHome:/家|うち|ホーム/.test(name)});
+  saveSt({places:places});renderPlaces();
+}
+function editPlace(i){
+  var places=loadSt().places||[];
+  var name=prompt('場所の名前',places[i].name);if(!name)return;
+  var addr=prompt('住所',places[i].addr);if(!addr)return;
+  places[i]={name:name,addr:addr,isHome:/家|うち/.test(name)};
+  saveSt({places:places});renderPlaces();
+}
+function delPlace(i){
+  if(!confirm('削除しますか？'))return;
+  var places=loadSt().places||[];
+  places.splice(i,1);saveSt({places:places});renderPlaces();
+}
+
+// 保存ボタン
+function saveSett(){
+  saveSt({
+    mapsKey:document.getElementById('inp-maps').value.trim(),
+    geminiKey:document.getElementById('inp-gemini').value.trim(),
+    elevenKey:document.getElementById('inp-eleven').value.trim()
+  });
+  closeSett();
+  var btn=document.querySelector('.sett-save-btn');
+  btn.textContent='✓ 保存しました';
+  setTimeout(function(){btn.textContent='保存する';},1500);
+}
+</script>
+</body>
+</html>
