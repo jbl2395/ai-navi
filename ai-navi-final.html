@@ -1,0 +1,1739 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>AI NAVI</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap');
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:'Share Tech Mono',monospace;}
+
+/* ============================================================
+   CSS変数
+   ============================================================ */
+:root{
+  --c1:rgba(0,200,255,1);
+  --c2:rgba(0,120,255,0.8);
+  --c3:rgba(0,200,255,0.3);
+  --bg-panel:rgba(4,10,22,0.94);
+  --safe-top:max(env(safe-area-inset-top,0px),20px);
+  --safe-bot:env(safe-area-inset-bottom,0px);
+}
+
+/* ============================================================
+   APP ホーム画面
+   ============================================================ */
+#app{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#000;}
+
+/* スキャンライン背景エフェクト */
+#app::before{
+  content:'';position:fixed;inset:0;
+  background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,40,80,0.04) 2px,rgba(0,40,80,0.04) 4px);
+  pointer-events:none;z-index:1;
+}
+
+#title-wrap{position:relative;z-index:10;text-align:center;margin-bottom:36px;opacity:0;transform:translateY(-20px);transition:opacity 1.2s ease,transform 1.2s ease;}
+#title-wrap.visible{opacity:1;transform:translateY(0);}
+#title-main{font-family:'Orbitron',sans-serif;font-weight:900;font-size:clamp(13px,4.4vw,26px);letter-spacing:0.24em;color:#fff;white-space:nowrap;
+  text-shadow:0 0 8px rgba(0,200,255,1),0 0 24px rgba(0,160,255,0.8),0 0 50px rgba(0,100,255,0.5);}
+#title-main::before,#title-main::after{content:'';position:absolute;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(0,200,255,0.5),transparent);}
+#title-main::before{top:-10px;}#title-main::after{bottom:-10px;}
+#title-sub{margin-top:12px;font-size:clamp(9px,2.5vw,13px);letter-spacing:0.45em;color:rgba(0,200,255,0.7);text-transform:uppercase;}
+
+/* 地球儀 */
+#globe-wrap{position:relative;z-index:5;width:min(58vw,58vh);height:min(58vw,58vh);flex-shrink:0;}
+#globe-canvas{width:100%;height:100%;display:block;border-radius:50%;filter:drop-shadow(0 0 28px rgba(0,150,255,0.55)) drop-shadow(0 0 60px rgba(0,80,200,0.3));}
+#globe-ring{position:absolute;inset:-6px;border-radius:50%;border:1px solid rgba(0,200,255,0.22);pointer-events:none;animation:ringPulse 3s ease-in-out infinite;}
+#globe-ring2{position:absolute;inset:-16px;border-radius:50%;border:1px solid rgba(0,200,255,0.09);pointer-events:none;animation:ringPulse 3s ease-in-out infinite 1.2s;}
+#globe-ring3{position:absolute;inset:-28px;border-radius:50%;border:1px solid rgba(0,200,255,0.05);pointer-events:none;animation:ringPulse 3s ease-in-out infinite 0.6s;}
+@keyframes ringPulse{0%,100%{opacity:0.4;transform:scale(1);}50%{opacity:1;transform:scale(1.015);}}
+
+/* 入力エリア */
+#input-area{position:relative;z-index:10;width:min(92vw,400px);margin-top:26px;opacity:0;transform:translateY(20px);transition:opacity 0.8s ease,transform 0.8s ease;pointer-events:none;}
+#input-area.visible{opacity:1;transform:translateY(0);pointer-events:all;}
+#input-label{text-align:center;font-size:clamp(11px,3vw,15px);color:rgba(255,255,255,0.8);letter-spacing:0.2em;margin-bottom:13px;font-family:'Orbitron',sans-serif;font-weight:400;}
+#input-box{display:flex;align-items:center;background:rgba(255,255,255,0.055);border:1px solid rgba(0,200,255,0.3);border-radius:14px;padding:11px 13px;gap:9px;
+  box-shadow:0 0 18px rgba(0,150,255,0.12),inset 0 1px 0 rgba(255,255,255,0.04);transition:border-color 0.3s,box-shadow 0.3s;}
+#input-box:focus-within{border-color:rgba(0,200,255,0.65);box-shadow:0 0 28px rgba(0,150,255,0.28),inset 0 1px 0 rgba(255,255,255,0.07);}
+#dest-input{flex:1;background:transparent;border:none;outline:none;font-size:16px;color:#fff;font-family:'Share Tech Mono',monospace;letter-spacing:0.05em;}
+#dest-input::placeholder{color:rgba(255,255,255,0.28);}
+
+#send-btn{width:40px;height:40px;border-radius:50%;background:rgba(0,180,255,0.2);border:1.5px solid rgba(0,200,255,0.55);display:none;align-items:center;justify-content:center;flex-shrink:0;cursor:pointer;transition:all 0.2s;touch-action:manipulation;}
+#send-btn.show{display:flex;}
+#send-btn:active{transform:scale(0.9);background:rgba(0,180,255,0.38);}
+#send-btn svg{width:17px;height:17px;}
+
+#mic-btn{width:40px;height:40px;border-radius:50%;background:rgba(0,180,255,0.15);border:1.5px solid rgba(0,200,255,0.45);display:flex;align-items:center;justify-content:center;flex-shrink:0;cursor:pointer;transition:all 0.2s;touch-action:manipulation;}
+#mic-btn:active{transform:scale(0.9);}
+#mic-btn.listening{background:rgba(255,50,50,0.28);border-color:rgba(255,100,100,0.75);animation:micGlow 1s ease-in-out infinite;}
+@keyframes micGlow{0%,100%{box-shadow:0 0 0 0 rgba(255,80,80,0.5);}50%{box-shadow:0 0 0 10px rgba(255,80,80,0);}}
+#mic-btn svg{width:19px;height:19px;}
+
+/* ============================================================
+   オーバーレイ：音声・ジオコード
+   ============================================================ */
+#voice-overlay{position:fixed;inset:0;z-index:100;background:rgba(0,0,12,0.75);display:none;flex-direction:column;align-items:center;justify-content:center;gap:22px;backdrop-filter:blur(8px);}
+#voice-overlay.on{display:flex;}
+.voice-waves{display:flex;align-items:center;gap:5px;height:48px;}
+.vw{width:5px;border-radius:3px;background:rgba(0,200,255,0.9);animation:wv 0.8s ease-in-out infinite;}
+.vw:nth-child(1){height:12px;animation-delay:0s;}.vw:nth-child(2){height:26px;animation-delay:0.1s;}.vw:nth-child(3){height:44px;animation-delay:0.2s;}.vw:nth-child(4){height:30px;animation-delay:0.3s;}.vw:nth-child(5){height:16px;animation-delay:0.4s;}
+@keyframes wv{0%,100%{transform:scaleY(1);opacity:1;}50%{transform:scaleY(0.3);opacity:0.5;}}
+#voice-txt{font-family:'Orbitron',sans-serif;font-size:13px;letter-spacing:0.22em;color:rgba(0,200,255,0.9);}
+#voice-cancel{font-size:11px;color:rgba(255,255,255,0.45);background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 20px;cursor:pointer;font-family:'Share Tech Mono',monospace;touch-action:manipulation;}
+
+#geocode-overlay{position:fixed;inset:0;z-index:90;background:rgba(0,0,12,0.6);display:none;flex-direction:column;align-items:center;justify-content:center;gap:18px;backdrop-filter:blur(4px);}
+#geocode-overlay.on{display:flex;}
+.geo-spinner{width:46px;height:46px;border:2px solid rgba(0,200,255,0.18);border-top-color:rgba(0,200,255,0.9);border-radius:50%;animation:spin 0.7s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+#geocode-txt{font-family:'Orbitron',sans-serif;font-size:11px;letter-spacing:0.28em;color:rgba(0,200,255,0.8);}
+
+/* ステータスバー */
+#status{position:fixed;bottom:calc(var(--safe-bot) + 18px);left:0;right:0;text-align:center;font-size:10px;letter-spacing:0.22em;color:rgba(0,200,255,0.4);z-index:10;font-family:'Share Tech Mono',monospace;transition:opacity 0.5s;}
+
+#zoom-overlay{position:fixed;inset:0;z-index:50;background:radial-gradient(ellipse at center,transparent 20%,#000 100%);pointer-events:none;opacity:0;transition:opacity 0.5s;}
+
+/* APIバッジ */
+#api-badge{position:fixed;top:calc(var(--safe-top) + 62px);left:16px;z-index:200;font-size:9px;letter-spacing:0.14em;padding:4px 10px;border-radius:20px;font-family:'Share Tech Mono',monospace;opacity:0;animation:fadeInEl 1s ease 2.5s forwards;}
+#api-badge.live{background:rgba(0,220,100,0.1);border:1px solid rgba(0,220,100,0.28);color:rgba(0,220,100,0.8);}
+#api-badge.demo{background:rgba(255,140,0,0.12);border:1px solid rgba(255,140,0,0.28);color:rgba(255,140,0,0.8);}
+@keyframes fadeInEl{to{opacity:1;}}
+
+/* ============================================================
+   設定ボタン & パネル
+   ============================================================ */
+#sett-btn{position:fixed;top:calc(var(--safe-top) + 62px);right:16px;z-index:200;width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,0.055);border:1px solid rgba(255,255,255,0.12);display:flex;align-items:center;justify-content:center;cursor:pointer;touch-action:manipulation;transition:all 0.2s;opacity:0;animation:fadeInEl 1s ease 2s forwards;}
+#sett-btn:active{transform:scale(0.9);background:rgba(255,255,255,0.12);}
+#sett-btn svg{width:18px;height:18px;opacity:0.6;}
+
+#sett-bg{position:fixed;inset:0;z-index:300;background:rgba(0,0,0,0.6);display:none;backdrop-filter:blur(4px);}
+#sett-bg.on{display:block;}
+
+#sett-panel{position:fixed;bottom:0;left:0;right:0;z-index:301;background:#060c18;border-top:1px solid rgba(0,200,255,0.2);border-radius:20px 20px 0 0;max-height:88vh;overflow-y:auto;-webkit-overflow-scrolling:touch;padding-bottom:calc(var(--safe-bot) + 20px);transform:translateY(100%);transition:transform 0.35s cubic-bezier(0.32,0.72,0,1);}
+#sett-panel.on{transform:translateY(0);}
+.sett-handle{width:36px;height:4px;background:rgba(255,255,255,0.13);border-radius:2px;margin:14px auto 0;}
+.sett-header{font-family:'Orbitron',sans-serif;font-size:14px;font-weight:700;color:rgba(0,200,255,0.9);letter-spacing:0.14em;padding:16px 18px 14px;border-bottom:1px solid rgba(255,255,255,0.055);}
+.sett-sec{padding:14px 18px 4px;}
+.sett-sec-ttl{font-size:10px;font-weight:600;color:rgba(0,200,255,0.5);letter-spacing:0.18em;margin-bottom:11px;text-transform:uppercase;}
+.sett-row{display:flex;align-items:center;padding:9px 0;gap:10px;border-bottom:1px solid rgba(255,255,255,0.04);}
+.sett-row:last-child{border-bottom:none;}
+.sett-lbl{flex:1;}
+.sett-lbl-main{font-size:13px;color:rgba(255,255,255,0.82);}
+.sett-lbl-sub{font-size:11px;color:rgba(255,255,255,0.28);margin-top:2px;}
+.tog{width:44px;height:26px;border-radius:13px;background:rgba(255,255,255,0.1);position:relative;cursor:pointer;transition:background 0.2s;flex-shrink:0;touch-action:manipulation;}
+.tog.on{background:rgba(0,200,255,0.65);}
+.tog::after{content:'';position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;transition:transform 0.2s;box-shadow:0 1px 4px rgba(0,0,0,0.4);}
+.tog.on::after{transform:translateX(18px);}
+.api-row{padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.04);}
+.api-row:last-child{border-bottom:none;}
+.api-lbl{font-size:12px;color:rgba(255,255,255,0.5);margin-bottom:5px;}
+.api-lbl-hint{font-size:10px;color:rgba(0,200,255,0.38);margin-bottom:6px;margin-top:-2px;}
+.api-inp-wrap{display:flex;align-items:center;gap:8px;}
+.api-inp{flex:1;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:9px 12px;color:#fff;font-size:12px;font-family:'Share Tech Mono',monospace;outline:none;}
+.api-inp:focus{border-color:rgba(0,200,255,0.45);}
+.api-inp::placeholder{color:rgba(255,255,255,0.18);}
+.sel-btns{display:flex;gap:6px;flex-wrap:wrap;margin-top:5px;}
+.sel-btn{padding:7px 12px;border-radius:8px;font-size:12px;font-weight:600;border:1.5px solid rgba(255,255,255,0.09);color:rgba(255,255,255,0.36);background:rgba(255,255,255,0.035);cursor:pointer;touch-action:manipulation;transition:all 0.15s;}
+.sel-btn.sel{border-color:rgba(0,200,255,0.65);color:rgba(0,200,255,0.88);background:rgba(0,200,255,0.09);}
+.sel-btn:active{transform:scale(0.94);}
+.place-item{display:flex;align-items:center;padding:9px 0;border-bottom:1px solid rgba(255,255,255,0.04);gap:10px;}
+.place-item:last-child{border-bottom:none;}
+.place-info{flex:1;}
+.place-name{font-size:13px;color:rgba(255,255,255,0.82);}
+.place-addr{font-size:11px;color:rgba(255,255,255,0.28);margin-top:2px;}
+.place-btns{display:flex;gap:6px;}
+.place-edit-btn,.place-del-btn{font-size:11px;padding:5px 9px;border-radius:7px;border:none;cursor:pointer;touch-action:manipulation;}
+.place-edit-btn{background:rgba(255,255,255,0.07);color:rgba(255,255,255,0.55);}
+.place-del-btn{background:rgba(255,60,60,0.13);color:rgba(255,100,100,0.75);}
+.add-place-btn{width:100%;padding:10px;margin-top:7px;background:rgba(0,200,255,0.07);border:1px dashed rgba(0,200,255,0.22);border-radius:10px;color:rgba(0,200,255,0.55);font-size:12px;cursor:pointer;touch-action:manipulation;font-family:'Share Tech Mono',monospace;}
+.add-place-btn:active{background:rgba(0,200,255,0.14);}
+.theme-btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;}
+.theme-btn{width:34px;height:34px;border-radius:50%;border:2.5px solid transparent;cursor:pointer;touch-action:manipulation;transition:all 0.15s;position:relative;}
+.theme-btn.sel{border-color:#fff;transform:scale(1.18);}
+.theme-btn.sel::after{content:'✓';position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:800;text-shadow:0 1px 3px rgba(0,0,0,0.8);}
+.sett-save-btn{width:calc(100% - 36px);margin:12px 18px 0;padding:13px;background:rgba(0,200,255,0.16);border:1px solid rgba(0,200,255,0.38);border-radius:11px;color:rgba(0,200,255,0.88);font-size:14px;font-weight:600;letter-spacing:0.1em;cursor:pointer;touch-action:manipulation;font-family:'Orbitron',sans-serif;transition:all 0.15s;}
+.sett-save-btn:active{background:rgba(0,200,255,0.26);}
+.sett-pad{height:20px;}
+
+/* ============================================================
+   マップコンテナ
+   ============================================================ */
+#maps-container{position:fixed;inset:0;z-index:500;background:#000;display:none;}
+#maps-container.on{display:block;}
+#maps-div{width:100%;height:100%;}
+#sv-container{position:fixed;inset:0;z-index:600;background:#000;display:none;}
+#sv-container.on{display:block;}
+#demo-container{position:fixed;inset:0;z-index:500;background:#000;display:none;}
+#demo-container.on{display:block;}
+
+/* ============================================================
+   ナビUI（共通） - body.nav-mode で全子要素の表示制御
+   ============================================================ */
+#nav-ui{display:none;}
+#nav-ui.on{display:block;}
+
+/* nav-mode クラスが付いている間だけナビ要素を表示（JSで付け外し） */
+body:not(.nav-mode) .nav-top,
+body:not(.nav-mode) #nav-top-bar,
+body:not(.nav-mode) .nav-back-btn,
+body:not(.nav-mode) .nav-speed-box,
+body:not(.nav-mode) .nav-info-box,
+body:not(.nav-mode) .nav-instr-box,
+body:not(.nav-mode) #ai-bubble,
+body:not(.nav-mode) #sv-toggle-btn,
+body:not(.nav-mode) #nav-bottom-bar,
+body:not(.nav-mode) #location-notice{display:none !important;}
+
+/* 上部UIバー：目的地ボックス＋Street Viewボタンを横並び */
+#nav-top-bar{
+  position:fixed;
+  top:calc(var(--safe-top) + 10px);
+  left:58px; right:12px;
+  display:flex; gap:8px; align-items:stretch;
+  z-index:620; pointer-events:none;
+}
+/* 目的地ボックス */
+.nav-top{
+  position:static;          /* 独立fixedをやめてバー内に入れる */
+  flex:1; min-width:0;
+  text-align:left;
+  pointer-events:none;
+  z-index:auto;
+}
+.nav-dest-box{
+  display:flex; align-items:center; gap:10px;
+  background:rgba(3,10,22,0.9);border:1px solid rgba(0,200,255,0.28);
+  border-radius:10px;padding:6px 12px;backdrop-filter:blur(10px);
+  width:100%;
+}
+.nav-dest-label{display:none;} /* ラベル非表示でコンパクトに */
+.nav-dest-name{font-size:14px;font-weight:700;color:#fff;letter-spacing:0.06em;font-family:'Orbitron',sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;}
+.nav-mode-tag{font-size:9px;letter-spacing:0.1em;padding:3px 7px;border-radius:8px;display:inline-block;flex-shrink:0;margin-top:0;}
+.nav-mode-tag.demo{background:rgba(255,140,0,0.18);border:1px solid rgba(255,140,0,0.28);color:rgba(255,140,0,0.8);}
+.nav-mode-tag.live{background:rgba(0,220,100,0.13);border:1px solid rgba(0,220,100,0.28);color:rgba(0,220,100,0.8);}
+.nav-mode-tag.sv{background:rgba(0,200,255,0.13);border:1px solid rgba(0,200,255,0.35);color:rgba(0,200,255,0.9);}
+
+/* Street Viewボタン：同じ高さで横に */
+#sv-toggle-btn{
+  position:static;          /* バー内に配置 */
+  pointer-events:all;cursor:pointer;touch-action:manipulation;
+  flex-shrink:0;display:none;
+  z-index:auto;
+}
+.sv-btn-inner{
+  background:rgba(3,10,22,0.9);border:1px solid rgba(0,200,255,0.35);
+  border-radius:10px;padding:6px 12px;font-size:11px;
+  font-family:'Orbitron',sans-serif;color:rgba(0,200,255,0.85);
+  letter-spacing:0.08em;backdrop-filter:blur(8px);white-space:nowrap;
+  height:100%;display:flex;align-items:center;
+}
+#sv-toggle-btn:active .sv-btn-inner{background:rgba(0,200,255,0.15);}
+.nav-speed-val{font-size:36px;font-weight:900;color:#fff;font-family:'Orbitron',sans-serif;line-height:1;}
+.nav-speed-unit{font-size:10px;color:rgba(255,255,255,0.38);letter-spacing:0.2em;margin-top:2px;}
+
+/* 距離・ETA（値・単位スタイルのみ） */
+.nav-dist-val{font-size:20px;font-weight:700;color:rgba(0,200,255,0.9);font-family:'Orbitron',sans-serif;line-height:1;}
+.nav-dist-unit{font-size:10px;color:rgba(255,255,255,0.38);letter-spacing:0.14em;margin-top:2px;}
+.nav-eta-wrap{margin-top:8px;border-top:1px solid rgba(255,255,255,0.07);padding-top:8px;}
+.nav-eta-val{font-size:16px;font-weight:700;color:rgba(255,255,255,0.78);font-family:'Orbitron',sans-serif;}
+.nav-eta-lbl{font-size:9px;color:rgba(255,255,255,0.32);letter-spacing:0.14em;margin-top:1px;}
+
+/* 案内ボックス 内部スタイル */
+.nav-arrow{font-size:26px;flex-shrink:0;min-width:32px;text-align:center;}
+.nav-instr-text{flex:1;min-width:0;}
+.nav-instr-main{font-size:13px;color:#fff;letter-spacing:0.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.nav-instr-sub{font-size:11px;color:rgba(0,200,255,0.65);margin-top:3px;letter-spacing:0.1em;}
+.nav-ai-badge{font-size:9px;color:rgba(0,200,255,0.55);letter-spacing:0.08em;text-align:right;flex-shrink:0;line-height:1.4;}
+
+/* Gemini AIチャットバブル */
+#ai-bubble{position:fixed;bottom:calc(var(--safe-bot) + 260px);left:50%;transform:translateX(-50%);background:rgba(0,60,120,0.85);border:1px solid rgba(0,200,255,0.4);border-radius:16px;padding:11px 16px;backdrop-filter:blur(12px);font-size:13px;color:rgba(200,235,255,0.95);text-align:center;max-width:min(88vw,340px);pointer-events:none;opacity:0;transition:opacity 0.5s;white-space:normal;line-height:1.5;z-index:618;}
+#ai-bubble.show{opacity:1;}
+#ai-bubble::before{content:'✦ GEMINI';display:block;font-size:9px;letter-spacing:0.25em;color:rgba(0,200,255,0.65);margin-bottom:5px;}
+
+/* 戻るボタン */
+.nav-back-btn{position:fixed;top:calc(var(--safe-top) + 10px);left:14px;pointer-events:all;cursor:pointer;z-index:620;}
+.nav-back-inner{background:rgba(3,10,22,0.9);border:1px solid rgba(255,255,255,0.13);border-radius:50%;width:40px;height:40px;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(8px);}
+
+/* Street View切替ボタン → 上部右、目的地ボックスの下 */
+#sv-toggle-btn{position:fixed;top:calc(var(--safe-top) + 64px);right:14px;pointer-events:all;cursor:pointer;z-index:620;touch-action:manipulation;display:none;}
+.sv-btn-inner{background:rgba(3,10,22,0.9);border:1px solid rgba(0,200,255,0.35);border-radius:10px;padding:7px 12px;font-size:11px;font-family:'Orbitron',sans-serif;color:rgba(0,200,255,0.85);letter-spacing:0.1em;backdrop-filter:blur(8px);white-space:nowrap;}
+#sv-toggle-btn:active .sv-btn-inner{background:rgba(0,200,255,0.15);}
+
+/* 旧dest-change-btn は非表示（下部バーに統合） */
+#dest-change-btn{display:none !important;}
+
+/* ============================================================
+   下部コントロールバー → position:fixed で確実に最下部固定
+   ============================================================ */
+#nav-bottom-bar{
+  position:fixed;
+  bottom:calc(var(--safe-bot) + 12px);
+  left:12px;right:12px;
+  display:none;gap:8px;
+  pointer-events:all;
+  z-index:620;
+}
+#nav-bottom-bar.show{display:flex;}
+.nbb-btn{
+  flex:1;padding:13px 4px;border-radius:12px;
+  font-size:10px;font-family:'Orbitron',sans-serif;
+  letter-spacing:0.05em;cursor:pointer;touch-action:manipulation;
+  backdrop-filter:blur(12px);border:1px solid;
+  transition:all 0.15s;text-align:center;line-height:1.4;
+}
+.nbb-btn:active{transform:scale(0.95);}
+#btn-dest-chg{background:rgba(255,110,30,0.22);border-color:rgba(255,130,50,0.5);color:rgba(255,165,80,0.98);}
+#btn-dest-chg:active{background:rgba(255,110,30,0.38);}
+#btn-nav-end{background:rgba(255,50,70,0.2);border-color:rgba(255,80,100,0.45);color:rgba(255,120,130,0.98);}
+#btn-nav-end:active{background:rgba(255,50,70,0.34);}
+#btn-nav-resume{background:rgba(0,210,120,0.18);border-color:rgba(0,230,140,0.45);color:rgba(60,235,160,0.98);}
+#btn-nav-resume:active{background:rgba(0,210,120,0.32);}
+
+/* 案内ボックス → バーの上（fixed基準で配置） */
+.nav-instr-box{
+  position:fixed;
+  bottom:calc(var(--safe-bot) + 80px);
+  left:12px;right:12px;
+  background:rgba(3,10,22,0.92);border:1px solid rgba(0,200,255,0.22);
+  border-radius:14px;padding:13px 16px;backdrop-filter:blur(10px);
+  display:flex;align-items:center;gap:12px;pointer-events:none;
+  z-index:615;
+}
+
+/* 速度・情報ボックス */
+.nav-speed-box{
+  position:fixed;
+  bottom:calc(var(--safe-bot) + 170px);
+  left:12px;
+  background:rgba(3,10,22,0.9);border:1px solid rgba(0,200,255,0.18);
+  border-radius:14px;padding:12px 16px;backdrop-filter:blur(10px);
+  text-align:center;pointer-events:none;z-index:615;
+}
+.nav-info-box{
+  position:fixed;
+  bottom:calc(var(--safe-bot) + 170px);
+  right:12px;
+  background:rgba(3,10,22,0.9);border:1px solid rgba(0,200,255,0.18);
+  border-radius:14px;padding:12px 16px;backdrop-filter:blur(10px);
+  text-align:center;pointer-events:none;z-index:615;
+}
+
+/* 位置情報オフ通知バナー */
+#location-notice{
+  position:fixed;
+  bottom:calc(var(--safe-bot) + 270px);
+  left:12px;right:12px;
+  background:rgba(255,150,0,0.14);border:1px solid rgba(255,180,0,0.38);
+  border-radius:12px;padding:11px 15px;backdrop-filter:blur(10px);
+  font-size:12px;color:rgba(255,210,60,0.95);letter-spacing:0.04em;
+  line-height:1.55;text-align:center;pointer-events:none;
+  display:none;z-index:615;
+}
+#location-notice.show{display:block;}
+
+/* 目的地変更入力モーダル */
+#dest-change-modal{position:fixed;inset:0;z-index:700;background:rgba(0,0,12,0.8);display:none;align-items:center;justify-content:center;backdrop-filter:blur(8px);}
+#dest-change-modal.on{display:flex;}
+.dcm-box{background:#060c18;border:1px solid rgba(0,200,255,0.3);border-radius:18px;padding:22px 20px;width:min(88vw,360px);}
+.dcm-title{font-family:'Orbitron',sans-serif;font-size:13px;color:rgba(0,200,255,0.85);letter-spacing:0.15em;margin-bottom:14px;text-align:center;}
+.dcm-inp{width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(0,200,255,0.3);border-radius:10px;padding:10px 14px;color:#fff;font-size:14px;font-family:'Share Tech Mono',monospace;outline:none;margin-bottom:12px;}
+.dcm-inp:focus{border-color:rgba(0,200,255,0.6);}
+.dcm-inp::placeholder{color:rgba(255,255,255,0.25);}
+.dcm-btns{display:flex;gap:10px;}
+.dcm-ok{flex:1;padding:11px;background:rgba(0,200,255,0.18);border:1px solid rgba(0,200,255,0.4);border-radius:10px;color:rgba(0,200,255,0.9);font-size:13px;font-family:'Orbitron',sans-serif;cursor:pointer;touch-action:manipulation;letter-spacing:0.1em;}
+.dcm-ok:active{background:rgba(0,200,255,0.28);}
+.dcm-cancel{flex:1;padding:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:10px;color:rgba(255,255,255,0.5);font-size:13px;cursor:pointer;touch-action:manipulation;}
+
+/* フェーズ表示（ズーム中） */
+#phase-hud{position:fixed;inset:0;z-index:55;display:none;flex-direction:column;align-items:center;justify-content:center;gap:14px;pointer-events:none;}
+#phase-hud.on{display:flex;}
+#phase-hud-txt{font-family:'Orbitron',sans-serif;font-size:clamp(12px,3vw,18px);letter-spacing:0.28em;color:rgba(0,200,255,0.9);text-shadow:0 0 16px rgba(0,200,255,0.7);}
+#phase-hud-sub{font-size:11px;letter-spacing:0.22em;color:rgba(0,200,255,0.5);}
+.phase-bar{width:180px;height:2px;background:rgba(0,200,255,0.15);border-radius:1px;overflow:hidden;}
+.phase-bar-fill{height:100%;background:rgba(0,200,255,0.8);width:0%;transition:width 0.6s ease;border-radius:1px;}
+
+/* ルートオーバーレイ (目的地変更時ズームアウトアニメ) */
+#reroute-overlay{position:fixed;inset:0;z-index:650;background:rgba(0,0,12,0.82);display:none;flex-direction:column;align-items:center;justify-content:center;gap:16px;backdrop-filter:blur(8px);}
+#reroute-overlay.on{display:flex;}
+.reroute-spin{width:50px;height:50px;border:2px solid rgba(255,130,30,0.18);border-top-color:rgba(255,150,50,0.9);border-radius:50%;animation:spin 0.7s linear infinite;}
+#reroute-txt{font-family:'Orbitron',sans-serif;font-size:12px;letter-spacing:0.24em;color:rgba(255,150,50,0.85);}
+</style>
+</head>
+<body>
+
+<!-- ============================================================
+     ホーム画面
+     ============================================================ -->
+<div id="app">
+  <div id="title-wrap">
+    <div id="title-main">AI NAVIGATION SYSTEM</div>
+    <div id="title-sub">POWERED BY GEMINI</div>
+  </div>
+  <div id="globe-wrap">
+    <canvas id="globe-canvas"></canvas>
+    <div id="globe-ring"></div>
+    <div id="globe-ring2"></div>
+    <div id="globe-ring3"></div>
+  </div>
+  <div id="input-area">
+    <div id="input-label">どこへ行きますか？</div>
+    <div id="input-box">
+      <input id="dest-input" type="text" placeholder="目的地を入力..." autocomplete="off"
+        oninput="onInput()" onkeydown="onKey(event)">
+      <button id="send-btn" onclick="onSubmit()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="rgba(0,200,255,0.9)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/>
+        </svg>
+      </button>
+      <button id="mic-btn" onclick="toggleMic()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="rgba(0,200,255,0.9)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="9" y="2" width="6" height="12" rx="3"/>
+          <path d="M5 10a7 7 0 0 0 14 0"/>
+          <line x1="12" y1="19" x2="12" y2="22"/><line x1="9" y1="22" x2="15" y2="22"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- 音声認識オーバーレイ -->
+<div id="voice-overlay">
+  <div class="voice-waves">
+    <div class="vw"></div><div class="vw"></div><div class="vw"></div><div class="vw"></div><div class="vw"></div>
+  </div>
+  <div id="voice-txt">LISTENING...</div>
+  <button id="voice-cancel" onclick="stopMic()">キャンセル</button>
+</div>
+
+<!-- Geocodeオーバーレイ -->
+<div id="geocode-overlay">
+  <div class="geo-spinner"></div>
+  <div id="geocode-txt">LOCATING...</div>
+</div>
+
+<!-- フェーズHUD（ズーム演出中） -->
+<div id="phase-hud">
+  <div id="phase-hud-txt">TARGETING DESTINATION</div>
+  <div class="phase-bar"><div class="phase-bar-fill" id="phase-bar-fill"></div></div>
+  <div id="phase-hud-sub">ACQUIRING SATELLITE DATA...</div>
+</div>
+
+<div id="status">SYSTEM READY</div>
+<div id="zoom-overlay"></div>
+<div id="api-badge" class="live">LIVE MODE</div>
+
+<!-- ============================================================
+     設定ボタン
+     ============================================================ -->
+<button id="sett-btn" onclick="openSett()">
+  <svg viewBox="0 0 24 24" fill="none" stroke="rgba(0,200,255,0.85)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="3"/>
+    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+  </svg>
+</button>
+
+<div id="sett-bg" onclick="closeSett()"></div>
+
+<!-- 設定パネル -->
+<div id="sett-panel">
+  <div class="sett-handle"></div>
+  <div class="sett-header">⚙ SETTINGS</div>
+
+  <div class="sett-sec">
+    <div class="sett-sec-ttl">🔑 APIキー</div>
+    <div class="api-row">
+      <div class="api-lbl">Google Maps API</div>
+      <div class="api-lbl-hint">Maps JavaScript + Geocoding + Directions + Street View</div>
+      <div class="api-inp-wrap">
+        <input class="api-inp" id="inp-maps" type="password" placeholder="AIza...">
+        <div class="tog" id="tog-maps" onclick="toggleApi('maps')"></div>
+      </div>
+    </div>
+    <div class="api-row">
+      <div class="api-lbl">Gemini API</div>
+      <div class="api-lbl-hint">AI音声案内・ルートアドバイス</div>
+      <div class="api-inp-wrap">
+        <input class="api-inp" id="inp-gemini" type="password" placeholder="AIza...">
+        <div class="tog" id="tog-gemini" onclick="toggleApi('gemini')"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="sett-sec">
+    <div class="sett-sec-ttl">🔊 音声設定</div>
+    <div class="sett-row">
+      <div class="sett-lbl">
+        <div class="sett-lbl-main">音声案内</div>
+        <div class="sett-lbl-sub">スピーカーで案内を読み上げ</div>
+      </div>
+      <div class="tog on" id="tog-voice" onclick="toggleSett('voice')"></div>
+    </div>
+    <div class="sett-row" style="flex-direction:column;align-items:flex-start;">
+      <div class="sett-lbl-main" style="margin-bottom:6px;">話す速度</div>
+      <div class="sel-btns">
+        <button class="sel-btn" id="spd-slow" onclick="setSpeed('slow')">ゆっくり</button>
+        <button class="sel-btn sel" id="spd-normal" onclick="setSpeed('normal')">普通</button>
+        <button class="sel-btn" id="spd-fast" onclick="setSpeed('fast')">速い</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="sett-sec">
+    <div class="sett-sec-ttl">🗺 ナビ設定</div>
+    <div class="sett-row" style="flex-direction:column;align-items:flex-start;">
+      <div class="sett-lbl-main" style="margin-bottom:6px;">ルート優先</div>
+      <div class="sel-btns">
+        <button class="sel-btn" id="route-highway" onclick="setRoute('highway')">🛣 高速優先</button>
+        <button class="sel-btn sel" id="route-normal" onclick="setRoute('normal')">🏘 一般道</button>
+      </div>
+    </div>
+    <div class="sett-row" style="flex-direction:column;align-items:flex-start;">
+      <div class="sett-lbl-main" style="margin-bottom:6px;">距離単位</div>
+      <div class="sel-btns">
+        <button class="sel-btn sel" id="unit-km" onclick="setUnit('km')">km</button>
+        <button class="sel-btn" id="unit-mi" onclick="setUnit('mi')">マイル</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="sett-sec">
+    <div class="sett-sec-ttl">🎨 表示設定</div>
+    <div class="sett-row">
+      <div class="sett-lbl">
+        <div class="sett-lbl-main">夜間モード自動切替</div>
+        <div class="sett-lbl-sub">日没後に自動でダーク表示</div>
+      </div>
+      <div class="tog on" id="tog-night" onclick="toggleSett('night')"></div>
+    </div>
+  </div>
+
+  <div class="sett-sec">
+    <div class="sett-sec-ttl">📍 登録場所</div>
+    <div id="places-list"></div>
+    <button class="add-place-btn" onclick="addPlace()">＋ 場所を追加</button>
+  </div>
+
+  <button class="sett-save-btn" onclick="saveSett()">保存する</button>
+  <div class="sett-pad"></div>
+</div>
+
+<!-- ============================================================
+     地図コンテナ
+     ============================================================ -->
+<div id="maps-container"><div id="maps-div"></div></div>
+<div id="sv-container"></div>
+<div id="demo-container"></div>
+
+<!-- ============================================================
+     ナビUI
+     ============================================================ -->
+<div id="nav-ui">
+  <!-- 戻るボタン（固定） -->
+  <div class="nav-back-btn" id="nav-back">
+    <div class="nav-back-inner">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.7)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="15 18 9 12 15 6"/>
+      </svg>
+    </div>
+  </div>
+
+  <!-- 上部バー：目的地＋Street Viewを横並び -->
+  <div id="nav-top-bar">
+    <div class="nav-top">
+      <div class="nav-dest-box">
+        <div class="nav-dest-name" id="nav-dest-name">---</div>
+        <div class="nav-mode-tag live" id="nav-mode-tag">LIVE</div>
+      </div>
+    </div>
+    <button id="sv-toggle-btn" onclick="toggleStreetView()">
+      <div class="sv-btn-inner" id="sv-btn-lbl">🚗 STREET VIEW</div>
+    </button>
+  </div>
+
+  <div class="nav-speed-box">
+    <div class="nav-speed-val" id="nav-speed">0</div>
+    <div class="nav-speed-unit">km/h</div>
+  </div>
+
+  <div class="nav-info-box">
+    <div class="nav-dist-val" id="nav-dist">--</div>
+    <div class="nav-dist-unit" id="nav-dist-unit">km先</div>
+    <div class="nav-eta-wrap">
+      <div class="nav-eta-val" id="nav-eta">--:--</div>
+      <div class="nav-eta-lbl">到着予定</div>
+    </div>
+  </div>
+
+  <!-- 位置情報オフ通知 -->
+  <div id="location-notice">
+    📍 位置情報がオフです<br>
+    設定 → プライバシーとセキュリティ → 位置情報サービス をオンにしてください<br>
+    オンにしたら「案内再開」を押してください
+  </div>
+
+  <div class="nav-instr-box">
+    <div class="nav-arrow" id="nav-arrow">↑</div>
+    <div class="nav-instr-text">
+      <div class="nav-instr-main" id="nav-instruction">ルートを計算中...</div>
+      <div class="nav-instr-sub" id="nav-next-dist"></div>
+    </div>
+    <div class="nav-ai-badge">AI<br>PILOT</div>
+  </div>
+
+  <!-- AI会話バブル -->
+  <div id="ai-bubble"></div>
+
+  <!-- 旧ボタン（CSS側で非表示済み） -->
+  <button id="dest-change-btn" onclick="openDestChangeModal()">
+    <div class="dest-chg-inner">⇄ 目的地変更</div>
+  </button>
+</div>
+<!-- /nav-ui -->
+
+<!-- 下部コントロールバー（nav-uiの外に独立配置） -->
+<div id="nav-bottom-bar">
+  <button class="nbb-btn" id="btn-dest-chg" onclick="openDestChangeModal()">⇄<br>目的地変更</button>
+  <button class="nbb-btn" id="btn-nav-end"  onclick="exitNav()">✕<br>案内終了</button>
+  <button class="nbb-btn" id="btn-nav-resume" onclick="resumeNav()">▶<br>案内再開</button>
+</div>
+
+<!-- 目的地変更モーダル -->
+<div id="dest-change-modal">
+  <div class="dcm-box">
+    <div class="dcm-title">🗺 新しい目的地</div>
+    <input class="dcm-inp" id="dcm-inp" type="text" placeholder="新しい目的地を入力..." autocomplete="off" onkeydown="if(event.key==='Enter')doDestChange()">
+    <div class="dcm-btns">
+      <button class="dcm-ok" onclick="doDestChange()">変更する</button>
+      <button class="dcm-cancel" onclick="closeDestChangeModal()">キャンセル</button>
+    </div>
+  </div>
+</div>
+
+<!-- リルートオーバーレイ -->
+<div id="reroute-overlay">
+  <div class="reroute-spin"></div>
+  <div id="reroute-txt">RECALCULATING ROUTE...</div>
+</div>
+
+<!-- ============================================================
+     JAVASCRIPT
+     ============================================================ -->
+<script>
+'use strict';
+
+// ============================================================
+// 状態管理
+// ============================================================
+var STATE = {
+  mapsApiKey: '',
+  geminiApiKey: '',
+  mapsLoaded: false,
+  mapsLoadCallbacks: [],
+  currentDest: '',
+  currentGeoData: null,
+  originGeoData: null,
+  navMode: 'map',
+  svPano: null,
+  directionsRenderer: null,
+  routeSteps: [],
+  stepIdx: 0,
+  navActive: false,
+  waitingForMove: false,
+  watchId: null,
+  lastLat: 0, lastLng: 0,
+  posTimer: null,
+  speedTimer: null,
+  aiSpeakTimer: null,
+  simLat: 0, simLng: 0,
+  currentMap: null,
+  currentOriginForTracking: null,
+  currentDestGeo: null,
+};
+
+// ============================================================
+// localStorage ユーティリティ
+// ============================================================
+function loadSt(){try{return JSON.parse(localStorage.getItem('ainavi_sett')||'{}');}catch(e){return{};}}
+function saveSt(d){localStorage.setItem('ainavi_sett',JSON.stringify(Object.assign(loadSt(),d)));}
+
+// ============================================================
+// APIキーをstorageから読込
+// ============================================================
+(function initKeys(){
+  var s=loadSt();
+  if(s.mapsKey&&s.mapsOn) STATE.mapsApiKey=s.mapsKey;
+  if(s.geminiKey&&s.geminiOn) STATE.geminiApiKey=s.geminiKey;
+})();
+
+// ============================================================
+// WebGL 地球儀
+// ============================================================
+var globe=(function(){
+  var canvas=document.getElementById('globe-canvas');
+  var gl=canvas.getContext('webgl')||canvas.getContext('experimental-webgl');
+  if(!gl)return{rotateToTarget:function(){},startSpin:function(){}};
+  var SIZE=512;canvas.width=SIZE;canvas.height=SIZE;
+  var VS=`attribute vec2 a_pos;varying vec2 v_uv;void main(){v_uv=a_pos*0.5+0.5;gl_Position=vec4(a_pos,0,1);}`;
+  var FS=`precision mediump float;varying vec2 v_uv;uniform sampler2D u_map;uniform float u_rot;uniform float u_time;uniform float u_fade;
+  float hash(vec2 p){p=fract(p*vec2(127.1,311.7));p+=dot(p,p+19.19);return fract(p.x*p.y);}
+  float noise(vec2 p){vec2 i=floor(p),f=fract(p);vec2 u=f*f*(3.0-2.0*f);return mix(mix(hash(i),hash(i+vec2(1,0)),u.x),mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),u.x),u.y);}
+  float fbm(vec2 p){float v=0.0,a=0.5;for(int i=0;i<4;i++){v+=noise(p)*a;p*=2.1;a*=0.5;}return v;}
+  void main(){
+    vec2 dc=(v_uv-0.5)*2.0;float dist=length(dc);
+    if(dist>1.04){gl_FragColor=vec4(0,0,0,0);return;}
+    if(dist>1.0){float rim=pow(clamp(1.0-(dist-1.0)/0.04,0.0,1.0),1.5);gl_FragColor=vec4(mix(vec3(0.15,0.5,1.0),vec3(0.4,0.78,1.0),rim),rim*0.9*u_fade);return;}
+    vec2 sph=dc;float z=sqrt(max(0.0,1.0-dot(sph,sph)));vec3 n=normalize(vec3(sph.x,sph.y,z));
+    float lat=atan(n.y,length(n.xz));float lon=atan(n.x,n.z)+u_rot;
+    float tu=fract(lon/6.2832+0.5);float tv=1.0-(lat/3.14159+0.5);
+    float isLand=texture2D(u_map,vec2(tu,tv)).r;
+    float oceanDepth=fbm(vec2(tu,tv)*4.0+vec2(2.1,1.3));
+    vec3 col=mix(mix(vec3(0.01,0.05,0.40),vec3(0.04,0.20,0.72),oceanDepth*0.9),mix(vec3(0.05,0.15,0.45),vec3(0.10,0.28,0.62),fbm(vec2(tu,tv)*7.0+vec2(5.1,3.7))*0.35+0.65),isLand);
+    float polar=smoothstep(0.80,0.94,abs(tv-0.5)*2.0);col=mix(col,vec3(0.78,0.90,1.0),polar);
+    float cloud=smoothstep(0.54,0.68,fbm(vec2(tu+u_time*0.003,tv)*5.0+vec2(1.1,2.2)))*(1.0-polar*0.5);
+    col=mix(col,vec3(0.82,0.92,1.0),cloud*0.65);
+    vec3 light=normalize(vec3(-0.5,0.4,0.8));col*=(0.22+clamp(dot(n,light),0.0,1.0)*0.78);
+    col+=vec3(0.04,0.18,0.60)*pow(1.0-z,4.0)*0.9;
+    gl_FragColor=vec4(col,u_fade);}`;
+  function mkS(t,s){var sh=gl.createShader(t);gl.shaderSource(sh,s);gl.compileShader(sh);return sh;}
+  var prog=gl.createProgram();
+  gl.attachShader(prog,mkS(gl.VERTEX_SHADER,VS));gl.attachShader(prog,mkS(gl.FRAGMENT_SHADER,FS));gl.linkProgram(prog);gl.useProgram(prog);
+  var buf=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
+  var ap=gl.getAttribLocation(prog,'a_pos');gl.enableVertexAttribArray(ap);gl.vertexAttribPointer(ap,2,gl.FLOAT,false,0,0);
+  gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
+  var uRot=gl.getUniformLocation(prog,'u_rot'),uTime=gl.getUniformLocation(prog,'u_time'),uFade=gl.getUniformLocation(prog,'u_fade'),uMap=gl.getUniformLocation(prog,'u_map');
+  // 大陸データ（簡易）
+  var MW=1024,MH=512,mc=document.createElement('canvas');mc.width=MW;mc.height=MH;
+  var ctx=mc.getContext('2d');ctx.fillStyle='#000';ctx.fillRect(0,0,MW,MH);ctx.fillStyle='#fff';
+  function ll(lon,lat){return[(lon+180)/360*MW,(90-lat)/180*MH];}
+  function poly(pts){ctx.beginPath();var p0=ll(pts[0][0],pts[0][1]);ctx.moveTo(p0[0],p0[1]);for(var i=1;i<pts.length;i++){var p=ll(pts[i][0],pts[i][1]);ctx.lineTo(p[0],p[1]);}ctx.closePath();ctx.fill();}
+  poly([[-9,71],[20,78],[40,72],[60,73],[80,73],[100,68],[110,60],[120,55],[130,48],[135,40],[136,34],[130,28],[120,22],[108,18],[100,10],[100,2],[104,-2],[108,2],[110,8],[120,22],[124,14],[118,6],[112,2],[108,2],[100,10],[92,8],[82,10],[72,14],[64,22],[58,24],[46,14],[40,12],[34,20],[30,28],[24,36],[16,40],[8,44],[2,44],[-2,44],[-6,38],[-8,36],[-8,44],[-2,52],[4,54],[8,58],[14,64],[20,68],[28,70],[-9,71]]);
+  poly([[4,58],[8,62],[14,66],[20,70],[26,70],[28,64],[22,58],[14,56],[8,56],[4,58]]);
+  poly([[-6,36],[2,36],[10,38],[18,38],[32,30],[40,22],[44,12],[44,2],[40,-4],[36,-18],[28,-34],[22,-34],[16,-28],[12,-18],[10,-8],[8,4],[4,6],[2,8],[-4,6],[-12,8],[-16,12],[-18,14],[-16,20],[-18,28],[-14,32],[-6,36]]);
+  poly([[-168,68],[-140,60],[-128,50],[-124,38],[-118,34],[-96,18],[-86,14],[-84,10],[-78,8],[-76,8],[-72,10],[-68,12],[-64,18],[-60,24],[-60,34],[-66,44],[-70,46],[-68,48],[-62,46],[-60,46],[-64,48],[-68,52],[-72,56],[-78,62],[-86,66],[-92,70],[-100,70],[-120,70],[-140,70],[-160,70],[-168,68]]);
+  poly([[-80,10],[-72,-2],[-64,-8],[-52,-4],[-46,-14],[-40,-22],[-44,-34],[-66,-56],[-68,-52],[-62,-38],[-56,-28],[-52,-18],[-64,-4],[-72,2],[-76,8],[-80,10]]);
+  poly([[114,-22],[122,-18],[130,-14],[138,-12],[148,-18],[154,-26],[152,-36],[144,-38],[136,-34],[128,-32],[120,-30],[114,-26],[114,-22]]);
+  poly([[130,31],[131,32],[132,34],[133,34],[134,34],[135,34],[136,36],[137,36],[138,38],[139,40],[140,40],[141,41],[141,40],[140,38],[138,36],[136,34],[135,34],[134,32],[132,32],[130,31]]);
+  poly([[140,42],[142,44],[144,44],[145,44],[145,42],[142,42],[140,42]]);
+  var px=ctx.getImageData(0,0,MW,MH).data;
+  var tex=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,tex);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,MW,MH,0,gl.RGBA,gl.UNSIGNED_BYTE,px);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.REPEAT);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  var rotY=0,targetRot=0,spinning=true,startTime=performance.now();
+  function render(){
+    var t=(performance.now()-startTime)/1000,fadeIn=Math.min(1,t/1.5);
+    if(spinning){rotY+=0.004;}else{var d=targetRot-rotY;while(d>Math.PI)d-=Math.PI*2;while(d<-Math.PI)d+=Math.PI*2;rotY+=d*0.03;}
+    gl.viewport(0,0,SIZE,SIZE);gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,tex);gl.uniform1i(uMap,0);
+    gl.uniform1f(uRot,rotY);gl.uniform1f(uTime,t);gl.uniform1f(uFade,fadeIn);
+    gl.drawArrays(gl.TRIANGLE_STRIP,0,4);requestAnimationFrame(render);
+  }
+  requestAnimationFrame(render);
+  return{
+    rotateToTarget:function(lon){targetRot=lon*Math.PI/180;spinning=false;},
+    startSpin:function(){spinning=true;}
+  };
+})();
+
+// ============================================================
+// オープニング
+// ============================================================
+window.addEventListener('load',function(){
+  setTimeout(function(){document.getElementById('title-wrap').classList.add('visible');},400);
+  setTimeout(function(){
+    document.getElementById('input-area').classList.add('visible');
+    setStatus('ENTER DESTINATION');
+  },1400);
+});
+
+function setStatus(txt){document.getElementById('status').textContent=txt;}
+
+// ============================================================
+// 入力処理
+// ============================================================
+function onInput(){document.getElementById('send-btn').classList.toggle('show',document.getElementById('dest-input').value.trim().length>0);}
+function onKey(e){if(e.key==='Enter')onSubmit();}
+function onSubmit(){var v=document.getElementById('dest-input').value.trim();if(v)geocodeAndNavigate(v);}
+
+// ============================================================
+// Maps JS API ローダー
+// ============================================================
+function loadMapsApi(callback){
+  var key=STATE.mapsApiKey;
+  if(!key){var s=loadSt();if(s.mapsKey)key=s.mapsKey;}
+  if(!key){callback(false);return;}
+  if(STATE.mapsLoaded&&typeof google!=='undefined'&&google.maps){callback(true);return;}
+  if(STATE.mapsLoadCallbacks.length>0){STATE.mapsLoadCallbacks.push(callback);return;}
+  STATE.mapsLoadCallbacks.push(callback);
+  var sc=document.createElement('script');
+  sc.src='https://maps.googleapis.com/maps/api/js?key='+key+'&libraries=geometry,places,directions&callback=__mapsApiReady';
+  sc.onerror=function(){STATE.mapsLoadCallbacks.forEach(function(cb){cb(false);});STATE.mapsLoadCallbacks=[];};
+  document.head.appendChild(sc);
+  var timer=setTimeout(function(){STATE.mapsLoadCallbacks.forEach(function(cb){cb(false);});STATE.mapsLoadCallbacks=[];},10000);
+  window.__mapsApiReady=function(){
+    clearTimeout(timer);STATE.mapsLoaded=true;
+    STATE.mapsLoadCallbacks.forEach(function(cb){cb(true);});STATE.mapsLoadCallbacks=[];
+  };
+}
+
+// ============================================================
+// Geocoding
+// ============================================================
+function geocodeAndNavigate(dest){
+  document.getElementById('dest-input').blur();
+  setStatus('LOCATING: '+dest.toUpperCase());
+  document.getElementById('geocode-overlay').classList.add('on');
+  document.getElementById('geocode-txt').textContent='GEOCODING...';
+  var key=STATE.mapsApiKey||loadSt().mapsKey||'';
+  if(!key){
+    document.getElementById('geocode-overlay').classList.remove('on');
+    setStatus('NO API KEY - DEMO MODE');
+    globe.rotateToTarget(135.5);
+    setTimeout(function(){startZoomFlow(dest,'demo',null);},2000);
+    return;
+  }
+  fetch('https://maps.googleapis.com/maps/api/geocode/json?address='+encodeURIComponent(dest)+'&language=ja&key='+key)
+    .then(function(r){return r.json();})
+    .then(function(data){
+      document.getElementById('geocode-overlay').classList.remove('on');
+      if(data.status==='OK'&&data.results.length>0){
+        var loc=data.results[0].geometry.location;
+        var addr=data.results[0].formatted_address;
+        setStatus('FOUND: '+addr.substring(0,26).toUpperCase());
+        globe.rotateToTarget(-loc.lng);
+        setTimeout(function(){startZoomFlow(dest,'live',{lat:loc.lat,lng:loc.lng,addr:addr});},2200);
+      } else {
+        setStatus('NOT FOUND - DEMO MODE');
+        globe.rotateToTarget(135.5);
+        setTimeout(function(){startZoomFlow(dest,'demo',null);},1800);
+      }
+    })
+    .catch(function(){
+      document.getElementById('geocode-overlay').classList.remove('on');
+      setStatus('ERROR - DEMO MODE');
+      globe.rotateToTarget(135.5);
+      setTimeout(function(){startZoomFlow(dest,'demo',null);},1800);
+    });
+}
+
+// ============================================================
+// ズームイン演出 → ナビ遷移
+// ============================================================
+function startZoomFlow(dest,mode,geoData){
+  var gw=document.getElementById('globe-wrap');
+  var ov=document.getElementById('zoom-overlay');
+  var ph=document.getElementById('phase-hud');
+  var fill=document.getElementById('phase-bar-fill');
+
+  // UI非表示
+  document.getElementById('input-area').style.cssText='transition:opacity 0.5s;opacity:0;pointer-events:none;';
+  document.getElementById('title-wrap').style.cssText='transition:opacity 0.5s;opacity:0;';
+
+  // フェーズHUD表示
+  ph.classList.add('on');
+  document.getElementById('phase-hud-txt').textContent='TARGETING: '+dest.toUpperCase();
+  document.getElementById('phase-hud-sub').textContent='ACQUIRING SATELLITE DATA...';
+
+  // 地球儀ズームイン
+  gw.style.transition='transform 2.0s cubic-bezier(0.4,0,0.2,1)';
+  gw.style.transform='scale(5)';
+  ov.style.transition='opacity 1.4s ease 0.9s';ov.style.opacity='1';
+
+  // プログレスバー
+  setTimeout(function(){fill.style.width='40%';},200);
+  setTimeout(function(){
+    fill.style.width='75%';
+    document.getElementById('phase-hud-sub').textContent='LOADING MAP TILES...';
+  },900);
+  setTimeout(function(){fill.style.width='100%';},1800);
+
+  setTimeout(function(){
+    // 全てのホーム画面要素を隠す
+    document.getElementById('app').style.display='none';
+    document.getElementById('zoom-overlay').style.display='none';
+    document.getElementById('api-badge').style.display='none';
+    document.getElementById('sett-btn').style.display='none';
+    ph.classList.remove('on');
+    if(mode==='live'){
+      startLiveNav(dest,geoData);
+    } else {
+      startDemoNav(dest);
+    }
+  },2600);
+}
+
+// ============================================================
+// LIVE NAVIメイン：衛星マップ → ルート → Street View
+// ============================================================
+function startLiveNav(dest,geoData){
+  STATE.currentDest=dest;
+  STATE.currentGeoData=geoData;
+
+  loadMapsApi(function(ok){
+    if(!ok){startDemoNav(dest);return;}
+    buildLiveMapScene(dest,geoData);
+  });
+}
+
+function buildLiveMapScene(dest,geoData){
+  var container=document.getElementById('maps-div');
+  container.innerHTML='';
+  document.getElementById('maps-container').classList.add('on');
+
+  // 1. 衛星マップで目的地を上空から表示
+  var map=new google.maps.Map(container,{
+    center:{lat:geoData.lat,lng:geoData.lng},
+    zoom:16,
+    mapTypeId:'satellite',
+    tilt:45,
+    heading:0,
+    disableDefaultUI:true,
+    gestureHandling:'greedy',
+    styles:[]
+  });
+
+  // ズームインアニメ（上空 → 地表へ）
+  var zoom=12;
+  var zoomInterval=setInterval(function(){
+    zoom=Math.min(zoom+0.5,18);
+    map.setZoom(zoom);
+    if(zoom>=18)clearInterval(zoomInterval);
+  },80);
+
+  // 目的地マーカー
+  new google.maps.Marker({
+    position:{lat:geoData.lat,lng:geoData.lng},map:map,
+    icon:{
+      path:google.maps.SymbolPath.CIRCLE,
+      fillColor:'#00c8ff',fillOpacity:1,
+      strokeColor:'#ffffff',strokeWeight:2,scale:10
+    },
+    animation:google.maps.Animation.DROP
+  });
+
+  showNavUI(dest,'live','SATELLITE VIEW');
+  setNavInfo(dest,'',true,geoData);
+
+  // マップ描画後すぐルート計算へ（GPS待ちしない）
+  setTimeout(function(){
+    getCurrentLocationAndRoute(map,dest,geoData);
+  },800);
+}
+
+function getCurrentLocationAndRoute(map,dest,geoData){
+  setNavInstruction('📡','現在地を取得中...','位置情報をオンにしてください');
+
+  if(!navigator.geolocation){
+    // Geolocation非対応の端末はエラー表示して終了
+    setNavInstruction('⚠','位置情報非対応','このブラウザでは利用できません');
+    showLocationNotice();
+    document.getElementById('dest-change-btn').classList.add('show');
+    document.getElementById('sv-toggle-btn').style.display='flex';
+    return;
+  }
+
+  navigator.geolocation.getCurrentPosition(
+    function(pos){
+      // GPS取得成功 → 実際の現在地からルート計算
+      var origin={lat:pos.coords.latitude, lng:pos.coords.longitude};
+      STATE.originGeoData=origin;
+      hideLocationNotice();
+      calcRouteAndDisplay(map, origin, geoData, dest);
+    },
+    function(err){
+      // GPS拒否 or エラー
+      if(err.code===1){
+        // PERMISSION_DENIED
+        showLocationNotice();
+        setNavInstruction('📍','位置情報をオンにしてください','設定 → プライバシー → 位置情報サービス');
+        document.getElementById('dest-change-btn').classList.add('show');
+        document.getElementById('sv-toggle-btn').style.display='flex';
+      } else {
+        // TIMEOUT or UNAVAILABLE → 位置情報は許可されているがGPS取得失敗
+        setNavInstruction('⚠','GPS取得に失敗','「案内再開」を押して再試行してください');
+        document.getElementById('dest-change-btn').classList.add('show');
+        document.getElementById('sv-toggle-btn').style.display='flex';
+      }
+      // いずれも出発地未設定のまま待機モードへ
+      STATE.currentMap=map;
+      STATE.currentDestGeo=geoData;
+      STATE.currentOriginForTracking=null;
+    },
+    {enableHighAccuracy:true, timeout:12000, maximumAge:0}
+  );
+}
+
+function calcRouteAndDisplay(map,origin,destGeo,destName){
+  var s=loadSt();
+  var avoidHighways=(s.route==='normal');
+
+  setNavInstruction('🔵','ルート計算中...','');
+
+  var dr=new google.maps.DirectionsRenderer({
+    map:map,
+    suppressMarkers:false,
+    polylineOptions:{strokeColor:'#00c8ff',strokeOpacity:0.88,strokeWeight:6}
+  });
+  STATE.directionsRenderer=dr;
+
+  var dsvc=new google.maps.DirectionsService();
+  dsvc.route({
+    origin:new google.maps.LatLng(origin.lat,origin.lng),
+    destination:new google.maps.LatLng(destGeo.lat,destGeo.lng),
+    travelMode:google.maps.TravelMode.DRIVING,
+    avoidHighways:avoidHighways,
+    region:'jp',
+    language:'ja'
+  },function(result,status){
+    if(status===google.maps.DirectionsStatus.OK){
+      dr.setDirections(result);
+      var leg=result.routes[0].legs[0];
+      STATE.routeSteps=leg.steps;
+      STATE.stepIdx=0;
+      updateRouteInfoUI(leg);
+
+      // Step1: まずルート全体を俯瞰表示（1.5秒）
+      fitMapToRoute(map,result);
+
+      // Step2: 1.5秒後に現在地（出発地）へズームイン → 運転席視線
+      setTimeout(function(){
+        zoomToDriverView(map, origin, function(){
+          // Step3: ズーム完了後に「案内を開始します」と発話 → 待機
+          document.getElementById('dest-change-btn').classList.add('show');
+          document.getElementById('sv-toggle-btn').style.display='block';
+
+          if(STATE.routeSteps.length>0){
+            var step=STATE.routeSteps[0];
+            setNavInstruction('↑',stripHtml(step.instructions),step.distance.text+'先');
+          }
+
+          // 「案内を開始します」発話
+          speakWithGemini('案内を開始します。目的地の'+destName+'まで、'+leg.distance.text+'、約'+leg.duration.text+'です。移動を開始すると案内を続けます。');
+
+          // 待機状態へ：移動検知まで案内ステップは進めない
+          setNavWaitingMode(map, origin, destGeo);
+        });
+      }, 1500);
+    } else {
+      // ステータス別エラーメッセージ
+      var msg='ルートエラー: '+status;
+      if(status==='REQUEST_DENIED') msg='Directions API未有効 (GCPで有効化してください)';
+      else if(status==='OVER_QUERY_LIMIT') msg='APIクォータ超過';
+      else if(status==='ZERO_RESULTS') msg='ルートが見つかりません';
+      setNavInstruction('⚠',msg,'Street Viewは利用可能です');
+      showAiBubble(msg);
+      setStatus('DIRECTIONS: '+status);
+      // 直線距離で暫定ETA
+      var dx=destGeo.lat-origin.lat,dy=destGeo.lng-origin.lng;
+      var km=Math.sqrt(dx*dx+dy*dy)*111;
+      document.getElementById('nav-dist').textContent=km.toFixed(1);
+      var nowE=new Date();nowE.setMinutes(nowE.getMinutes()+Math.round(km*2));
+      document.getElementById('nav-eta').textContent=String(nowE.getHours()).padStart(2,'0')+':'+String(nowE.getMinutes()).padStart(2,'0');
+      // ボタン類は表示
+      setTimeout(function(){
+        document.getElementById('dest-change-btn').classList.add('show');
+        document.getElementById('sv-toggle-btn').style.display='block';
+      },800);
+    }
+  });
+}
+
+// ルート全体をfitBounds
+function fitMapToRoute(map,result){
+  var bounds=new google.maps.LatLngBounds();
+  result.routes[0].overview_path.forEach(function(p){bounds.extend(p);});
+  map.fitBounds(bounds,{top:80,bottom:120,left:20,right:20});
+}
+
+// ============================================================
+// 現在地（出発点）へのドライバー視点ズームイン
+// ============================================================
+function zoomToDriverView(map, origin, onComplete){
+  // 最初のステップのheadingを取得してカメラ向きを決める
+  var heading = 0;
+  if(STATE.routeSteps.length>0 && STATE.routeSteps[0].start_location && STATE.routeSteps[0].end_location){
+    var s=STATE.routeSteps[0].start_location;
+    var e=STATE.routeSteps[0].end_location;
+    heading = google.maps.geometry.spherical.computeHeading(s,e);
+  }
+
+  // まず現在地上空へパン
+  map.panTo({lat:origin.lat, lng:origin.lng});
+
+  // ズームを段階的に上げながらtilt/headingも設定（衛星→ドライバー視線）
+  var targetZoom = 19;
+  var currentZoom = map.getZoom() || 14;
+  var steps = 0;
+  var maxSteps = 18;
+
+  var zoomTimer = setInterval(function(){
+    steps++;
+    var progress = steps / maxSteps;
+    // ズーム：現在→19
+    var z = currentZoom + (targetZoom - currentZoom) * easeInOut(progress);
+    map.setZoom(Math.round(z));
+    // tilt：0→60（地面を見下ろす角度）
+    map.setTilt(Math.round(60 * easeInOut(progress)));
+    // heading：徐々に進行方向へ
+    map.setHeading(heading * easeInOut(progress));
+
+    if(steps >= maxSteps){
+      clearInterval(zoomTimer);
+      map.setZoom(19);
+      map.setTilt(60);
+      map.setHeading(heading);
+      // ドライバー視点で静止 → コールバック
+      setTimeout(onComplete, 600);
+    }
+  }, 80);
+}
+
+function easeInOut(t){return t<0.5?2*t*t:1-Math.pow(-2*t+2,2)/2;}
+
+// ============================================================
+// 待機モード：「案内再開」ボタンを押すまで待機
+// ============================================================
+function setNavWaitingMode(map, origin, destGeo){
+  STATE.navActive=false;
+  STATE.waitingForMove=false;
+  STATE.lastLat=origin.lat;
+  STATE.lastLng=origin.lng;
+  // mapオブジェクトをSTATEに保存（resumeNavから使う）
+  STATE.currentMap=map;
+  STATE.currentOriginForTracking=origin;
+  STATE.currentDestGeo=destGeo;
+
+  setNavInstruction('⏸','出発の準備ができたら「案内再開」を押してください','');
+
+  // 位置情報の許可状態を確認
+  if(navigator.permissions){
+    navigator.permissions.query({name:'geolocation'}).then(function(result){
+      if(result.state==='denied'){
+        showLocationNotice();
+      }
+      // 状態が変化したら通知を更新
+      result.onchange=function(){
+        if(this.state==='denied') showLocationNotice();
+        else hideLocationNotice();
+      };
+    }).catch(function(){
+      // permissions API非対応 → 位置情報を試みてエラーなら通知
+      checkGeolocationPermission();
+    });
+  } else {
+    checkGeolocationPermission();
+  }
+}
+
+function checkGeolocationPermission(){
+  if(!navigator.geolocation){showLocationNotice();return;}
+  navigator.geolocation.getCurrentPosition(
+    function(){hideLocationNotice();},
+    function(e){
+      if(e.code===1) showLocationNotice(); // PERMISSION_DENIED
+    },
+    {timeout:3000,maximumAge:60000}
+  );
+}
+
+function showLocationNotice(){
+  document.getElementById('location-notice').classList.add('show');
+  setNavInstruction('📍','位置情報をオンにしてください','設定 → プライバシー → 位置情報サービス');
+}
+function hideLocationNotice(){
+  document.getElementById('location-notice').classList.remove('show');
+}
+
+// ============================================================
+// 案内再開（手動）
+// ============================================================
+function resumeNav(){
+  if(!STATE.currentMap||!STATE.currentDestGeo) return;
+  hideLocationNotice();
+  document.getElementById('btn-nav-resume').textContent='取得中...';
+  setNavInstruction('📡','現在地を取得中...','');
+
+  if(navigator.geolocation){
+    navigator.geolocation.getCurrentPosition(function(pos){
+      document.getElementById('btn-nav-resume').innerHTML='▶<br>案内再開';
+      var realOrigin={lat:pos.coords.latitude,lng:pos.coords.longitude};
+      STATE.currentOriginForTracking=realOrigin;
+      STATE.originGeoData=realOrigin;
+      STATE.waitingForMove=false;
+      // 現在地から正しくルートを再計算
+      if(STATE.directionsRenderer){STATE.directionsRenderer.setMap(null);STATE.directionsRenderer=null;}
+      calcRouteAndDisplay(STATE.currentMap, realOrigin, STATE.currentDestGeo, STATE.currentDest);
+    }, function(e){
+      document.getElementById('btn-nav-resume').innerHTML='▶<br>案内再開';
+      if(e.code===1){
+        showLocationNotice();
+        showAiBubble('位置情報の許可が必要です。設定でオンにしてから再度「案内再開」を押してください。');
+      } else {
+        showAiBubble('GPS取得に失敗しました。もう一度「案内再開」を押してください。');
+        setNavInstruction('⚠','GPS取得失敗','再度「案内再開」を押してください');
+      }
+    },{enableHighAccuracy:true, timeout:12000, maximumAge:0});
+  } else {
+    document.getElementById('btn-nav-resume').innerHTML='▶<br>案内再開';
+    showLocationNotice();
+  }
+}
+
+function updateRouteInfoUI(leg){
+  var distKm=(leg.distance.value/1000).toFixed(1);
+  document.getElementById('nav-dist').textContent=distKm;
+  document.getElementById('nav-dist-unit').textContent='km先';
+  // ETA計算
+  var now=new Date();
+  now.setSeconds(now.getSeconds()+leg.duration.value);
+  document.getElementById('nav-eta').textContent=
+    String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
+}
+
+function stripHtml(html){
+  var tmp=document.createElement('div');tmp.innerHTML=html;return tmp.textContent||tmp.innerText||html;
+}
+
+// ============================================================
+// ナビ追跡開始（GPS実走 or デモ走行）
+// ============================================================
+function startNavTracking(map, origin, destGeo, useGPS){
+  STATE.navActive=true;
+  STATE.waitingForMove=false;
+
+  if(useGPS){
+    // GPS実位置で追跡
+    setNavInstruction('↑','案内を開始しました','');
+    speakWithGemini('移動を確認しました。案内を開始します。');
+
+    if(STATE.watchId) navigator.geolocation.clearWatch(STATE.watchId);
+    var stepIdx=0;
+    STATE.watchId = navigator.geolocation.watchPosition(function(pos){
+      if(!STATE.navActive) return;
+      var cur = new google.maps.LatLng(pos.coords.latitude, pos.coords.longitude);
+
+      // 速度更新
+      var spd = pos.coords.speed ? Math.round(pos.coords.speed*3.6) : null;
+      if(spd!==null) document.getElementById('nav-speed').textContent=String(spd);
+
+      // 地図を現在地に追従（ドライバー視点維持）
+      map.panTo(cur);
+
+      // 次のステップとの距離チェック
+      if(stepIdx < STATE.routeSteps.length){
+        var nextStep = STATE.routeSteps[stepIdx];
+        var distToNext = google.maps.geometry.spherical.computeDistanceBetween(cur, nextStep.end_location);
+        if(distToNext < 50){ // 50m以内で次ステップへ
+          stepIdx++;
+          if(stepIdx < STATE.routeSteps.length){
+            var step=STATE.routeSteps[stepIdx];
+            setNavInstruction(getArrowForManeuver(step.maneuver),stripHtml(step.instructions),step.distance.text+'先');
+            speakWithGemini(stripHtml(step.instructions));
+          } else {
+            // 到着
+            STATE.navActive=false;
+            navigator.geolocation.clearWatch(STATE.watchId);
+            setNavInstruction('🏁','目的地に到着しました','お疲れ様でした');
+            speakWithGemini('目的地の'+STATE.currentDest+'に到着しました。お疲れ様でした。');
+          }
+        }
+        // 残距離更新
+        var remDist = google.maps.geometry.spherical.computeDistanceBetween(cur, new google.maps.LatLng(destGeo.lat,destGeo.lng));
+        document.getElementById('nav-dist').textContent=(remDist/1000).toFixed(1);
+        var now=new Date();now.setSeconds(now.getSeconds()+Math.round(remDist/12));
+        document.getElementById('nav-eta').textContent=String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
+      }
+    },{enableHighAccuracy:true,timeout:10000,maximumAge:2000});
+
+  } else {
+    // デモ走行（GPS不可時）
+    setNavInstruction('↑','デモ走行を開始します','');
+    speakWithGemini('デモモードで案内を開始します。');
+    startDemoTracking(map, origin, destGeo);
+  }
+}
+
+// デモ走行（擬似移動）
+function startDemoTracking(map, origin, destGeo){
+  var simStepIdx=0;var simSteps=STATE.routeSteps;
+  if(STATE.posTimer)clearInterval(STATE.posTimer);
+  STATE.posTimer=setInterval(function(){
+    if(!STATE.navActive){clearInterval(STATE.posTimer);return;}
+    if(simSteps.length===0)return;
+    simStepIdx++;
+    if(simStepIdx<simSteps.length){
+      var step=simSteps[simStepIdx];
+      setNavInstruction(getArrowForManeuver(step.maneuver),stripHtml(step.instructions),step.distance.text+'先');
+      var remDist=calcRemainingDist(simStepIdx,simSteps);
+      document.getElementById('nav-dist').textContent=(remDist/1000).toFixed(1);
+      var now=new Date();now.setSeconds(now.getSeconds()+Math.round(remDist/15));
+      document.getElementById('nav-eta').textContent=String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
+      if(simStepIdx%3===0)speakWithGemini(stripHtml(step.instructions));
+      // 地図を次ステップ位置へ追従
+      if(step.start_location) map.panTo(step.start_location);
+      document.getElementById('nav-speed').textContent=String(28+Math.round(Math.random()*18));
+    } else {
+      clearInterval(STATE.posTimer);STATE.navActive=false;
+      setNavInstruction('🏁','目的地に到着しました','お疲れ様でした');
+      speakWithGemini('目的地の'+STATE.currentDest+'に到着しました。お疲れ様でした。');
+    }
+  },8000);
+}
+
+function calcRemainingDist(fromIdx,steps){
+  var total=0;
+  for(var i=fromIdx;i<steps.length;i++)total+=steps[i].distance.value;
+  return total;
+}
+
+function getArrowForManeuver(maneuver){
+  if(!maneuver)return '↑';
+  if(/right/.test(maneuver))return '→';
+  if(/left/.test(maneuver))return '←';
+  if(/u-turn/.test(maneuver))return '↩';
+  if(/roundabout/.test(maneuver))return '↺';
+  if(/merge|straight/.test(maneuver))return '↑';
+  if(/ramp/.test(maneuver))return '↗';
+  return '↑';
+}
+
+// ============================================================
+// Street View 切替
+// ============================================================
+function toggleStreetView(){
+  if(STATE.navMode==='map'){
+    enterStreetView();
+  } else {
+    exitStreetView();
+  }
+}
+
+function enterStreetView(){
+  if(!STATE.currentGeoData)return;
+  var svCont=document.getElementById('sv-container');
+  svCont.innerHTML='';
+  svCont.classList.add('on');
+  STATE.navMode='sv';
+  document.getElementById('sv-btn-lbl').textContent='🗺 MAP VIEW';
+
+  var tag=document.getElementById('nav-mode-tag');
+  tag.className='nav-mode-tag sv';tag.textContent='STREET VIEW';
+
+  var pano=new google.maps.StreetViewPanorama(svCont,{
+    position:{lat:STATE.currentGeoData.lat,lng:STATE.currentGeoData.lng},
+    pov:{heading:0,pitch:0},
+    zoom:1,
+    addressControl:false,
+    showRoadLabels:true,
+    motionTracking:false,
+    motionTrackingControl:false,
+    fullscreenControl:false,
+    panControl:false,
+    zoomControl:false
+  });
+  STATE.svPano=pano;
+  speakWithGemini('Street Viewに切り替えました。周囲の様子を確認できます。');
+}
+
+function exitStreetView(){
+  document.getElementById('sv-container').classList.remove('on');
+  document.getElementById('sv-container').innerHTML='';
+  STATE.navMode='map';STATE.svPano=null;
+  document.getElementById('sv-btn-lbl').textContent='🚗 STREET VIEW';
+  var tag=document.getElementById('nav-mode-tag');
+  tag.className='nav-mode-tag live';tag.textContent='MAP VIEW';
+}
+
+// ============================================================
+// 目的地変更（Phase 2）
+// ============================================================
+function openDestChangeModal(){
+  document.getElementById('dcm-inp').value='';
+  document.getElementById('dest-change-modal').classList.add('on');
+  setTimeout(function(){document.getElementById('dcm-inp').focus();},300);
+}
+function closeDestChangeModal(){document.getElementById('dest-change-modal').classList.remove('on');}
+
+function doDestChange(){
+  var newDest=document.getElementById('dcm-inp').value.trim();
+  if(!newDest)return;
+  closeDestChangeModal();
+  rerouteToNewDest(newDest);
+}
+
+function rerouteToNewDest(newDest){
+  // リルートオーバーレイ表示
+  document.getElementById('reroute-overlay').classList.add('on');
+  document.getElementById('reroute-txt').textContent='GEOCODING NEW DESTINATION...';
+
+  // Street Viewを閉じる
+  if(STATE.navMode==='sv')exitStreetView();
+
+  // 現在のルートをクリア
+  if(STATE.posTimer){clearInterval(STATE.posTimer);STATE.posTimer=null;}
+  STATE.navActive=false;
+  if(STATE.directionsRenderer){STATE.directionsRenderer.setMap(null);STATE.directionsRenderer=null;}
+
+  // 新目的地をGeocode
+  var key=STATE.mapsApiKey||loadSt().mapsKey||'';
+  fetch('https://maps.googleapis.com/maps/api/geocode/json?address='+encodeURIComponent(newDest)+'&language=ja&key='+key)
+    .then(function(r){return r.json();})
+    .then(function(data){
+      if(data.status==='OK'&&data.results.length>0){
+        var loc=data.results[0].geometry.location;
+        var addr=data.results[0].formatted_address;
+        var newGeoData={lat:loc.lat,lng:loc.lng,addr:addr};
+        STATE.currentDest=newDest;STATE.currentGeoData=newGeoData;
+        document.getElementById('nav-dest-name').textContent=newDest.toUpperCase();
+        document.getElementById('reroute-txt').textContent='RECALCULATING ROUTE...';
+        // ズームアウトして新目的地へ → 再ルート
+        var container=document.getElementById('maps-div');
+        var map=new google.maps.Map(container,{
+          center:{lat:newGeoData.lat,lng:newGeoData.lng},
+          zoom:14,mapTypeId:'satellite',tilt:45,
+          disableDefaultUI:true,gestureHandling:'greedy'
+        });
+        setTimeout(function(){
+          document.getElementById('reroute-overlay').classList.remove('on');
+          calcRouteAndDisplay(map,STATE.originGeoData||{lat:newGeoData.lat+0.02,lng:newGeoData.lng-0.015},newGeoData,newDest);
+          speakWithGemini('目的地を'+newDest+'に変更しました。ルートを再計算しています。');
+        },1200);
+      } else {
+        document.getElementById('reroute-overlay').classList.remove('on');
+        setNavInstruction('⚠','目的地が見つかりませんでした','もう一度お試しください');
+      }
+    })
+    .catch(function(){
+      document.getElementById('reroute-overlay').classList.remove('on');
+      setNavInstruction('⚠','通信エラー','再試行してください');
+    });
+}
+
+// ============================================================
+// Gemini AI 案内
+// ============================================================
+function speakWithGemini(text){
+  showAiBubble(text);
+  // ブラウザTTS
+  var s=loadSt();
+  if(s.voice===false)return;
+  if(!window.speechSynthesis)return;
+  window.speechSynthesis.cancel();
+  var ut=new SpeechSynthesisUtterance(text);
+  ut.lang='ja-JP';
+  var spd={slow:0.75,normal:1.0,fast:1.3};
+  ut.rate=spd[s.speed||'normal']||1.0;
+  // Gemini APIキーがある場合は拡張可能（現状はブラウザTTS）
+  var voices=window.speechSynthesis.getVoices().filter(function(v){return v.lang.startsWith('ja');});
+  if(voices.length>0)ut.voice=voices[s.voiceIdx||0];
+  window.speechSynthesis.speak(ut);
+}
+
+function showAiBubble(text){
+  var el=document.getElementById('ai-bubble');
+  el.textContent=text;
+  el.classList.add('show');
+  if(STATE.aiSpeakTimer)clearTimeout(STATE.aiSpeakTimer);
+  STATE.aiSpeakTimer=setTimeout(function(){el.classList.remove('show');},4000);
+}
+
+// Gemini API呼び出し（AI応答生成）
+function callGemini(prompt,callback){
+  var key=STATE.geminiApiKey||loadSt().geminiKey||'';
+  if(!key){callback(null);return;}
+  fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key='+key,{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({contents:[{parts:[{text:prompt}]}]})
+  })
+  .then(function(r){return r.json();})
+  .then(function(d){
+    var txt=(d.candidates&&d.candidates[0]&&d.candidates[0].content&&d.candidates[0].content.parts&&d.candidates[0].content.parts[0]&&d.candidates[0].content.parts[0].text)||null;
+    callback(txt);
+  })
+  .catch(function(){callback(null);});
+}
+
+// ============================================================
+// ナビUI共通
+// ============================================================
+function showNavUI(dest,mode,tagText){
+  document.getElementById('nav-dest-name').textContent=dest.toUpperCase();
+  var tag=document.getElementById('nav-mode-tag');
+  if(mode==='live'){tag.className='nav-mode-tag live';tag.textContent=tagText||'LIVE';}
+  else if(mode==='sv'){tag.className='nav-mode-tag sv';tag.textContent='STREET VIEW';}
+  else{tag.className='nav-mode-tag demo';tag.textContent='DEMO MODE';}
+  document.body.classList.add('nav-mode');
+  document.getElementById('nav-ui').classList.add('on');
+  document.getElementById('nav-bottom-bar').classList.add('show');
+  document.getElementById('nav-back').onclick=exitNav;
+  document.getElementById('sv-toggle-btn').style.display='none'; // ルート計算完了後に表示
+}
+
+function setNavInfo(dest,addr,isLive,geoData){
+  document.getElementById('nav-speed').textContent='0';
+  document.getElementById('nav-dist').textContent='--';
+  document.getElementById('nav-arrow').textContent='📡';
+  document.getElementById('nav-instruction').textContent=isLive?'現在地を取得中...':'デモ走行中';
+  document.getElementById('nav-next-dist').textContent=addr||'';
+  var now=new Date();
+  document.getElementById('nav-eta').textContent=String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
+}
+
+function setNavInstruction(arrow,main,sub){
+  document.getElementById('nav-arrow').textContent=arrow;
+  document.getElementById('nav-instruction').textContent=main;
+  document.getElementById('nav-next-dist').textContent=sub||'';
+}
+
+function exitNav(){
+  // クリーンアップ
+  if(STATE.posTimer){clearInterval(STATE.posTimer);STATE.posTimer=null;}
+  if(STATE.speedTimer){clearInterval(STATE.speedTimer);STATE.speedTimer=null;}
+  if(STATE.watchId){navigator.geolocation.clearWatch(STATE.watchId);STATE.watchId=null;}
+  STATE.navActive=false;STATE.waitingForMove=false;
+  STATE.navMode='map';STATE.svPano=null;STATE.routeSteps=[];STATE.stepIdx=0;
+  if(window.speechSynthesis)window.speechSynthesis.cancel();
+
+  // DOM片付け
+  var mc=document.getElementById('maps-container');mc.classList.remove('on');document.getElementById('maps-div').innerHTML='';
+  document.getElementById('sv-container').classList.remove('on');document.getElementById('sv-container').innerHTML='';
+  var dc=document.getElementById('demo-container');dc.classList.remove('on');dc.innerHTML='';
+  document.body.classList.remove('nav-mode');
+  document.getElementById('nav-ui').classList.remove('on');
+  document.getElementById('nav-bottom-bar').classList.remove('show');
+  document.getElementById('location-notice').classList.remove('show');
+  document.getElementById('ai-bubble').classList.remove('show');
+
+  // ホーム復元
+  document.getElementById('app').style.display='flex';
+  document.getElementById('zoom-overlay').style.display='block';
+  document.getElementById('zoom-overlay').style.opacity='0';
+  document.getElementById('api-badge').style.display='block';
+  document.getElementById('sett-btn').style.display='flex';
+  var gw=document.getElementById('globe-wrap');gw.style.transition='none';gw.style.transform='scale(1)';
+  document.getElementById('input-area').style.cssText='opacity:1;pointer-events:all;';
+  document.getElementById('title-wrap').style.cssText='opacity:1;';
+  document.getElementById('dest-input').value='';
+  document.getElementById('send-btn').classList.remove('show');
+  setStatus('ENTER DESTINATION');
+  globe.startSpin();
+}
+
+// ============================================================
+// DEMO NAV
+// ============================================================
+function startDemoNav(dest){
+  var sc=document.createElement('script');
+  sc.src='https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
+  sc.onload=function(){buildDemoScene(dest);};
+  sc.onerror=function(){buildDemoSceneFallback(dest);};
+  document.head.appendChild(sc);
+}
+
+function buildDemoScene(dest){
+  var el=document.getElementById('demo-container');el.classList.add('on');el.innerHTML='';
+  showNavUI(dest,'demo');
+  document.getElementById('sv-toggle-btn').style.display='none';
+  document.getElementById('dest-change-btn').classList.add('show');
+
+  var renderer=new THREE.WebGLRenderer({antialias:true});
+  renderer.setSize(window.innerWidth,window.innerHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+  el.appendChild(renderer.domElement);
+
+  var scene=new THREE.Scene();
+  scene.background=new THREE.Color(0x000814);
+  scene.fog=new THREE.FogExp2(0x000814,0.016);
+  var camera=new THREE.PerspectiveCamera(65,window.innerWidth/window.innerHeight,0.1,500);
+
+  // 道路
+  var road=new THREE.Mesh(new THREE.PlaneGeometry(12,600),new THREE.MeshLambertMaterial({color:0x111318}));
+  road.rotation.x=-Math.PI/2;road.position.z=-100;scene.add(road);
+  for(var i=0;i<60;i++){
+    var l=new THREE.Mesh(new THREE.PlaneGeometry(0.14,2.8),new THREE.MeshBasicMaterial({color:0xffd700,transparent:true,opacity:0.65}));
+    l.rotation.x=-Math.PI/2;l.position.set(0,0.01,-i*8-4);scene.add(l);
+  }
+  [[-6.05],[6.05]].forEach(function(x){
+    var eg=new THREE.Mesh(new THREE.PlaneGeometry(0.09,600),new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:0.35}));
+    eg.rotation.x=-Math.PI/2;eg.position.set(x,0.01,-100);scene.add(eg);
+  });
+
+  // ルート曲線
+  var rp=[];
+  for(var ri=0;ri<100;ri++)rp.push(new THREE.Vector3(Math.sin(ri*0.065)*2.5,0.05,-ri*4));
+  var rc=new THREE.CatmullRomCurve3(rp);
+  var rm=new THREE.MeshBasicMaterial({color:0x00c8ff,transparent:true,opacity:0.9});
+  scene.add(new THREE.Mesh(new THREE.TubeGeometry(rc,220,0.12,8,false),rm));
+  scene.add(new THREE.Mesh(new THREE.TubeGeometry(rc,220,0.4,8,false),new THREE.MeshBasicMaterial({color:0x0055ff,transparent:true,opacity:0.18})));
+
+  // ビル
+  var bc=[0x0a1628,0x0d1f38,0x081420,0x111a2e,0x0c1832];
+  function addB(x,z,w,d,h){
+    var b=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),new THREE.MeshLambertMaterial({color:bc[Math.floor(Math.random()*5)]}));
+    b.position.set(x,h/2,z);scene.add(b);
+    var wRow=Math.floor(h/2.5),wCol=Math.floor(w/1.8);
+    for(var wr=0;wr<wRow;wr++)for(var wc=0;wc<wCol;wc++){
+      if(Math.random()>0.3){
+        var lit=Math.random()>0.28;
+        var ww=new THREE.Mesh(new THREE.PlaneGeometry(0.58,0.75),new THREE.MeshBasicMaterial({color:lit?0x88bbff:0x112244,transparent:true,opacity:lit?0.88:0.28}));
+        ww.position.set(x-w/2+1+(wc*1.8)+0.3,1.4+wr*2.5,z+d/2+0.01);scene.add(ww);
+      }
+    }
+  }
+  [[-12,0,8,10,28],[-22,-20,10,12,40],[-14,-50,7,9,22],[-20,-80,12,10,50],[-14,-110,8,8,35],[-22,-140,10,12,45],[-15,-170,9,10,30],[-21,-200,11,11,55],
+   [12,0,8,10,32],[22,-20,10,12,38],[14,-50,7,9,25],[20,-80,12,10,48],[13,-110,8,8,30],[22,-140,10,12,42],[15,-170,9,10,28],[21,-200,11,11,52]
+  ].forEach(function(b){addB(b[0],b[1],b[2],b[3],b[4]);});
+
+  scene.add(new THREE.Mesh(new THREE.PlaneGeometry(220,600),new THREE.MeshLambertMaterial({color:0x080c10})));
+  scene.add(new THREE.AmbientLight(0x111a2e,0.8));
+  var dl=new THREE.DirectionalLight(0x3366ff,0.5);dl.position.set(10,30,-20);scene.add(dl);
+  for(var li=0;li<18;li++){[-7.5,7.5].forEach(function(lx){var pl=new THREE.PointLight(0x4466cc,0.7,22);pl.position.set(lx,5.5,-li*20-10);scene.add(pl);});}
+
+  var instructions=[
+    {d:'↑',t:'直進してください',n:'300m先'},
+    {d:'→',t:'右折してください',n:'200m先'},
+    {d:'↑',t:'直進してください',n:'500m先'},
+    {d:'←',t:'左折してください',n:'150m先'},
+    {d:'↑',t:'目的地に近づいています',n:'80m先'}
+  ];
+  var iIdx=0,iTimer=0,distVal=4.2;
+  var clock=new THREE.Clock(),routeP=0;
+
+  speakWithGemini('デモモードで案内を開始します。目的地の'+dest+'まで案内します。');
+
+  function anim(){
+    requestAnimationFrame(anim);
+    if(!document.getElementById('demo-container').classList.contains('on'))return;
+    var delta=clock.getDelta(),t=clock.getElapsedTime();
+    routeP+=delta*0.35;if(routeP>1)routeP=0;
+    var cp=rc.getPointAt(Math.min(routeP,0.99)),ca=rc.getPointAt(Math.min(routeP+0.04,0.99));
+    camera.position.set(cp.x,8,cp.z);camera.lookAt(ca.x,0,ca.z-22);
+    rm.opacity=0.72+0.2*Math.sin(t*3);
+    iTimer+=delta;if(iTimer>8){iTimer=0;iIdx=(iIdx+1)%instructions.length;}
+    var ins=instructions[iIdx];
+    setNavInstruction(ins.d,ins.t,ins.n);
+    distVal=Math.max(0,distVal-delta*0.012);
+    document.getElementById('nav-dist').textContent=distVal.toFixed(1);
+    document.getElementById('nav-speed').textContent=String(32+Math.round(Math.sin(t*0.6)*8));
+    var now=new Date();now.setMinutes(now.getMinutes()+Math.round(distVal*2.8));
+    document.getElementById('nav-eta').textContent=String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
+    renderer.render(scene,camera);
+  }
+  anim();
+  window.addEventListener('resize',function(){
+    if(!camera)return;
+    camera.aspect=window.innerWidth/window.innerHeight;camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth,window.innerHeight);
+  });
+}
+
+function buildDemoSceneFallback(dest){
+  // Three.js読込失敗時のフォールバック（シンプルなCanvas）
+  var el=document.getElementById('demo-container');el.classList.add('on');el.innerHTML='';
+  showNavUI(dest,'demo');
+  document.getElementById('dest-change-btn').classList.add('show');
+  var cv=document.createElement('canvas');cv.width=window.innerWidth;cv.height=window.innerHeight;
+  el.appendChild(cv);var ctx=cv.getContext('2d');
+  var t=0;
+  function draw(){
+    if(!el.classList.contains('on'))return;
+    requestAnimationFrame(draw);t+=0.02;
+    ctx.fillStyle='#000814';ctx.fillRect(0,0,cv.width,cv.height);
+    var cx=cv.width/2,cy=cv.height*0.55;
+    // 道路
+    ctx.fillStyle='#111318';
+    ctx.beginPath();ctx.moveTo(cx-80,cv.height);ctx.lineTo(cx-20,cy);ctx.lineTo(cx+20,cy);ctx.lineTo(cx+80,cv.height);ctx.fill();
+    // ルートライン
+    ctx.strokeStyle='rgba(0,200,255,0.9)';ctx.lineWidth=4;
+    ctx.beginPath();ctx.moveTo(cx,cv.height);ctx.lineTo(cx,cy-30);ctx.stroke();
+    ctx.fillStyle='rgba(0,200,255,0.8)';ctx.font='bold 14px Orbitron,monospace';ctx.textAlign='center';
+    ctx.fillText('DEMO NAVIGATION',cx,50);
+    ctx.fillStyle='rgba(255,255,255,0.6)';ctx.font='12px monospace';
+    ctx.fillText(dest,cx,72);
+  }
+  draw();
+}
+
+// ============================================================
+// 音声認識
+// ============================================================
+var recog=null,isListening=false;
+function toggleMic(){if(isListening)stopMic();else startMic();}
+function startMic(){
+  var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){alert('このブラウザは音声認識に対応していません');return;}
+  if(!recog){
+    recog=new SR();recog.lang='ja-JP';recog.continuous=false;recog.interimResults=false;
+    recog.onresult=function(e){var t=e.results[0][0].transcript;stopMicUI();document.getElementById('dest-input').value=t;onInput();setTimeout(onSubmit,400);};
+    recog.onerror=function(){stopMicUI();};recog.onend=function(){stopMicUI();};
+  }
+  isListening=true;document.getElementById('mic-btn').classList.add('listening');document.getElementById('voice-overlay').classList.add('on');
+  try{recog.start();}catch(e){stopMicUI();}
+}
+function stopMic(){if(recog)try{recog.abort();}catch(e){}stopMicUI();}
+function stopMicUI(){isListening=false;document.getElementById('mic-btn').classList.remove('listening');document.getElementById('voice-overlay').classList.remove('on');}
+
+// ============================================================
+// 設定パネル
+// ============================================================
+function openSett(){initSettPanel();document.getElementById('sett-bg').classList.add('on');document.getElementById('sett-panel').classList.add('on');}
+function closeSett(){document.getElementById('sett-bg').classList.remove('on');document.getElementById('sett-panel').classList.remove('on');}
+
+function initSettPanel(){
+  var s=loadSt();
+  if(s.mapsKey)document.getElementById('inp-maps').value=s.mapsKey;
+  if(s.geminiKey)document.getElementById('inp-gemini').value=s.geminiKey;
+  document.getElementById('tog-maps').classList.toggle('on',!!s.mapsOn);
+  document.getElementById('tog-gemini').classList.toggle('on',!!s.geminiOn);
+  document.getElementById('tog-voice').classList.toggle('on',s.voice!==false);
+  document.getElementById('tog-night').classList.toggle('on',s.night!==false);
+  setSpeed(s.speed||'normal',true);setRoute(s.route||'normal',true);setUnit(s.unit||'km',true);
+  renderPlaces();
+}
+
+function toggleApi(key){
+  var s=loadSt();var map={maps:'mapsOn',gemini:'geminiOn'};
+  s[map[key]]=!s[map[key]];saveSt(s);
+  document.getElementById('tog-'+key).classList.toggle('on',s[map[key]]);
+}
+function toggleSett(key){
+  var s=loadSt();var cur=s[key]!==false;s[key]=!cur;saveSt(s);
+  var ids={voice:'tog-voice',night:'tog-night'};
+  document.getElementById(ids[key]).classList.toggle('on',s[key]);
+}
+function setSpeed(val,silent){['slow','normal','fast'].forEach(function(s){document.getElementById('spd-'+s).classList.toggle('sel',s===val);});if(!silent)saveSt({speed:val});}
+function setRoute(val,silent){['highway','normal'].forEach(function(r){document.getElementById('route-'+r).classList.toggle('sel',r===val);});if(!silent)saveSt({route:val});}
+function setUnit(val,silent){['km','mi'].forEach(function(u){document.getElementById('unit-'+u).classList.toggle('sel',u===val);});if(!silent)saveSt({unit:val});}
+
+function renderPlaces(){
+  var places=loadSt().places||[];
+  var el=document.getElementById('places-list');
+  if(!places.length){el.innerHTML='<div style="font-size:12px;color:rgba(255,255,255,0.22);padding:8px 0;">まだ登録されていません</div>';return;}
+  el.innerHTML=places.map(function(p,i){return'<div class="place-item"><div class="place-info"><div class="place-name">'+(p.isHome?'🏠 ':'📌 ')+p.name+'</div><div class="place-addr">'+p.addr+'</div></div><div class="place-btns"><button class="place-edit-btn" onclick="editPlace('+i+')">編集</button><button class="place-del-btn" onclick="delPlace('+i+')">削除</button></div></div>';}).join('');
+}
+function addPlace(){var name=prompt('場所の名前');if(!name)return;var addr=prompt('住所または施設名');if(!addr)return;var places=loadSt().places||[];places.push({name:name,addr:addr,isHome:/家|うち|ホーム/.test(name)});saveSt({places:places});renderPlaces();}
+function editPlace(i){var places=loadSt().places||[];var name=prompt('場所の名前',places[i].name);if(!name)return;var addr=prompt('住所',places[i].addr);if(!addr)return;places[i]={name:name,addr:addr,isHome:/家|うち/.test(name)};saveSt({places:places});renderPlaces();}
+function delPlace(i){if(!confirm('削除しますか？'))return;var places=loadSt().places||[];places.splice(i,1);saveSt({places:places});renderPlaces();}
+
+function saveSett(){
+  var mapsKey=document.getElementById('inp-maps').value.trim();
+  var geminiKey=document.getElementById('inp-gemini').value.trim();
+  saveSt({mapsKey:mapsKey,geminiKey:geminiKey});
+  if(mapsKey)STATE.mapsApiKey=mapsKey;
+  if(geminiKey)STATE.geminiApiKey=geminiKey;
+  closeSett();
+  var btn=document.querySelector('.sett-save-btn');
+  btn.textContent='✓ 保存しました';
+  setTimeout(function(){btn.textContent='保存する';},1800);
+  // APIバッジ更新
+  var badge=document.getElementById('api-badge');
+  if(mapsKey){badge.className='api-badge live';badge.textContent='LIVE MODE';}
+  else{badge.className='api-badge demo';badge.textContent='DEMO MODE';}
+}
+</script>
+</body>
+</html>
