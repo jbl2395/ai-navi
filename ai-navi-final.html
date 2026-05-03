@@ -2575,59 +2575,68 @@ function showAiBubbleOnly(text){
 }
 
 function speakTTSOnly(text){
-  var s=loadSt();
-  if(s.voice===false) return;
+  var s = loadSt();
+  if(s.voice === false) return;
 
-  // 常にlocalStorageから最新のキーを取得（設定変更が即反映される）
-  // TTS APIキー未設定時はMaps APIキーで代用（同プロジェクトなら動作する）
-  var ttsKey = s.ttsKey || STATE.ttsApiKey || s.mapsKey || STATE.mapsApiKey || '';
-  var ttsEnabled = s.ttsOn !== false && ttsKey;
-  if(ttsEnabled){
-    var spd={slow:0.8,normal:1.0,fast:1.3};
-    var rate=spd[s.speed||'normal']||1.0;
+  // キー解決: TTS専用キー → STATE → Maps APIキー（同プロジェクトで代用可）
+  var ttsKey = (s.ttsKey   && s.ttsKey.trim())
+            || (STATE.ttsApiKey && STATE.ttsApiKey.trim())
+            || (s.mapsKey  && s.mapsKey.trim())
+            || (STATE.mapsApiKey && STATE.mapsApiKey.trim())
+            || '';
+
+  // ttsOn は明示的にfalseにされていない限り有効
+  var ttsOn = (s.ttsOn !== false);
+
+  console.log('[TTS] key=', ttsKey ? ttsKey.substring(0,8)+'...' : '(none)',
+              '| ttsOn=', ttsOn, '| voice=', s.voiceName || 'ja-JP-Neural2-B');
+
+  if(ttsOn && ttsKey){
+    var spd = {slow:0.8, normal:1.0, fast:1.3};
+    var rate = spd[s.speed || 'normal'] || 1.0;
     var voiceName = s.voiceName || 'ja-JP-Neural2-B';
     var vol = s.volume !== undefined ? s.volume : 100;
     var volGainDb = ((vol - 50) * 0.3) + 6.0;
-    fetch('https://texttospeech.googleapis.com/v1/text:synthesize?key='+ttsKey,{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        input:{text:text},
-        voice:{languageCode:'ja-JP',name:voiceName},
-        audioConfig:{audioEncoding:'MP3',speakingRate:rate,volumeGainDb:volGainDb}
+    fetch('https://texttospeech.googleapis.com/v1/text:synthesize?key=' + ttsKey, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        input: {text: text},
+        voice: {languageCode: 'ja-JP', name: voiceName},
+        audioConfig: {audioEncoding: 'MP3', speakingRate: rate, volumeGainDb: volGainDb}
       })
     })
-    .then(function(r){return r.json();})
+    .then(function(r){
+      if(!r.ok){ console.warn('[TTS] HTTP error:', r.status, r.statusText);
+        return r.json().then(function(d){ throw d; }); }
+      return r.json();
+    })
     .then(function(d){
       if(d.audioContent){
-        var dataUrl = 'data:audio/mp3;base64,'+d.audioContent;
+        var dataUrl = 'data:audio/mp3;base64,' + d.audioContent;
+        var ctx = getAudioCtx();
+        if(ctx && ctx.state === 'suspended'){ ctx.resume().catch(function(){}); }
         if(_unlockedAudio){
-          _unlockedAudio.pause();
-          _unlockedAudio.src = dataUrl;
-          _unlockedAudio.volume = 1.0;
+          _unlockedAudio.pause(); _unlockedAudio.src = dataUrl; _unlockedAudio.volume = 1.0;
           _unlockedAudio.play().catch(function(){
-            var a = new Audio(dataUrl);
-            a.volume = 1.0;
-            a.play().catch(function(){ fallbackTTS(text); });
+            var a = new Audio(dataUrl); a.volume = 1.0;
+            a.play().catch(function(e2){ console.warn('[TTS] play failed:', e2); fallbackTTS(text); });
           });
         } else {
-          var a = new Audio(dataUrl);
-          a.volume = 1.0;
-          a.play().catch(function(){ fallbackTTS(text); });
+          var a = new Audio(dataUrl); a.volume = 1.0;
+          a.play().catch(function(e2){ console.warn('[TTS] play failed:', e2); fallbackTTS(text); });
         }
       } else {
-        // TTS APIエラーをコンソールに出力
-        console.warn('TTS API error:', JSON.stringify(d.error || d));
-        fallbackTTS(text);
+        console.warn('[TTS] API error response:', JSON.stringify(d));
         fallbackTTS(text);
       }
     })
-    .catch(function(){ fallbackTTS(text); });
+    .catch(function(err){ console.warn('[TTS] fetch error:', String(err)); fallbackTTS(text); });
   } else {
+    console.log('[TTS] fallback (ttsOn='+ttsOn+', hasKey='+(!!ttsKey)+')');
     fallbackTTS(text);
   }
 }
-
 function checkTollRoad(result){
   var hasToll = false;
   var steps = result.routes[0].legs[0].steps;
@@ -3486,11 +3495,12 @@ function saveSett(){
   var mapsKey=document.getElementById('inp-maps').value.trim();
   var geminiKey=document.getElementById('inp-gemini').value.trim();
   var ttsKey=document.getElementById('inp-tts').value.trim();
-  saveSt({mapsKey:mapsKey,geminiKey:geminiKey,ttsKey:ttsKey});
-  // 保存後は STATE も即時更新（空でも更新して古いキーを消す）
+ var newTtsOn = ttsKey ? true : (loadSt().ttsOn !== false);
+  saveSt({mapsKey:mapsKey, geminiKey:geminiKey, ttsKey:ttsKey, ttsOn:newTtsOn});
   STATE.mapsApiKey = mapsKey;
   STATE.geminiApiKey = geminiKey;
   STATE.ttsApiKey = ttsKey;
+  document.getElementById('tog-tts').classList.toggle('on', newTtsOn);
   closeSett();
   var btn=document.querySelector('.sett-save-btn');
   btn.textContent='✓ 保存しました';
@@ -3550,27 +3560,14 @@ function startCompass(map){
   function handler(e){
     if(STATE.navPaused) return;
     var compassHeading;
-    if(e.webkitCompassHeading !== undefined && e.webkitCompassHeading !== null){
-      // iOS: webkitCompassHeadingは真北基準の絶対値
-      // 画面の向きに合わせて補正（横向き時は回転分を加算）
-      var screenRot = 0;
-      if(window.screen && window.screen.orientation){
-        screenRot = window.screen.orientation.angle || 0;
-      } else if(typeof window.orientation === 'number'){
-        // window.orientation: portrait=0, landscape-left=90, landscape-right=-90
-        screenRot = -window.orientation;
-      }
-      compassHeading = (e.webkitCompassHeading + screenRot + 360) % 360;
+ if(e.webkitCompassHeading !== undefined && e.webkitCompassHeading !== null){
+      // iOS: webkitCompassHeading はすでに画面向き補正済みの真北基準値
+      // screen.orientation.angle の加算は不要（二重補正になる）
+      compassHeading = e.webkitCompassHeading;
     } else if(e.alpha !== null && e.alpha !== undefined){
-      var screenAngle = 0;
-      if(window.screen && window.screen.orientation){
-        screenAngle = window.screen.orientation.angle || 0;
-      } else if(typeof window.orientation === 'number'){
-        screenAngle = -window.orientation;
-      }
-      compassHeading = (360 - e.alpha + screenAngle + 360) % 360;
+      // Android/非iOS: alpha は画面固定座標系のため変換
+      compassHeading = (360 - e.alpha + 360) % 360;
     } else { return; }
-
     // スライダー値0=実際-15°のオフセット込みで適用
     var declSlider = loadSt().declination !== undefined ? loadSt().declination : 0;
     var decl = declSlider - 15;
@@ -3590,8 +3587,20 @@ function startCompass(map){
     }
   }
 
-  STATE.compassListener = handler;
+ STATE.compassListener = handler;
   window.addEventListener('deviceorientation', handler, true);
+
+  // orientationchange 時: リスナーを外して 300ms 後に再登録するだけ
+  window.addEventListener('orientationchange', function(){
+    if(!STATE.compassListener) return;
+    window.removeEventListener('deviceorientation', STATE.compassListener, true);
+    setTimeout(function(){
+      if(STATE.compassListener){
+        window.removeEventListener('deviceorientation', STATE.compassListener, true);
+        window.addEventListener('deviceorientation', STATE.compassListener, true);
+      }
+    }, 300);
+  });
 }
 </script>
 
