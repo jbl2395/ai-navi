@@ -2064,11 +2064,35 @@ function startFreeRoamTracking(map){
     var orient = loadSt().orient || 'heading';
     var h = STATE.currentHeading || 0;
     var z = currentZoom(map, 16);
+function getCorrectedHeading(raw){
 
+  let angle = raw;
+
+  // 磁気補正
+  angle += (settings?.declination || 0);
+
+  // 画面回転補正（←これが一番重要）
+  const screenAngle = screen.orientation?.angle || window.orientation || 0;
+  angle += screenAngle;
+
+  // 正規化
+  angle = (angle % 360 + 360) % 360;
+
+  // スムージング
+  STATE.smoothHeading = STATE.smoothHeading ?? angle;
+
+  let diff = angle - STATE.smoothHeading;
+  if(diff > 180) diff -= 360;
+  if(diff < -180) diff += 360;
+
+  STATE.smoothHeading += diff * 0.15;
+
+  return STATE.smoothHeading;
+}
     map.moveCamera({
       center:{lat:pos.coords.latitude, lng:pos.coords.longitude},
       zoom: z, tilt:67,
-      heading: orient==='heading' ? h : 0
+     heading: orient === 'heading' ? getCorrectedHeading(h) : 0
     });
     updateCarMarker(h, orient);
   }, function(e){
