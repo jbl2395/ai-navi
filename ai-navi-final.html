@@ -2623,7 +2623,7 @@ function speakTTSOnly(text){
 
   // TTS APIキー未設定時はMaps APIキーで代用（同プロジェクトなら動作する）
   var ttsKey = s.ttsKey || STATE.ttsApiKey || s.mapsKey || STATE.mapsApiKey || '';
-  var ttsEnabled = s.ttsOn !== false && ttsKey;
+  var ttsEnabled = !!ttsKey;
   if(ttsEnabled){
     var spd={slow:0.8,normal:1.0,fast:1.3};
     var rate=spd[s.speed||'normal']||1.0;
@@ -3447,45 +3447,51 @@ function setVoiceType(name, silent, preview){
   if(preview){
     var s = loadSt();
     var ttsKey = s.ttsKey || STATE.ttsApiKey || s.mapsKey || STATE.mapsApiKey || '';
-    if(ttsKey && s.ttsOn !== false){
-      // iOSはタップイベント内でAudioを作成・play()しないと再生できない
-      // fetchは非同期なのでタップ時点でAudio要素を作り、src確定後にplay()する
-      var previewAudio = new Audio();
-      previewAudio.volume = 1.0;
-      // タップコンテキスト内でplay()を呼んでiOSの再生許可を取得
-      previewAudio.play().catch(function(){});
-      var vol = s.volume !== undefined ? s.volume : 100;
-      var volGainDb = ((vol - 50) * 0.3) + 6.0;
-      fetch('https://texttospeech.googleapis.com/v1/text:synthesize?key='+ttsKey,{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({
-          input:{text:'この音声で案内します'},
-          voice:{languageCode:'ja-JP',name:name},
-          audioConfig:{audioEncoding:'MP3',speakingRate:1.0,volumeGainDb:volGainDb}
-        })
-      })
-      .then(function(r){return r.json();})
-      .then(function(d){
-        if(d.audioContent){
-          previewAudio.src = 'data:audio/mp3;base64,'+d.audioContent;
-          previewAudio.play().catch(function(){});
-          // _unlockedAudioも更新
-          if(!_unlockedAudio) _unlockedAudio = previewAudio;
-        } else {
-          console.warn('TTS preview error:', JSON.stringify(d.error || d));
-        }
-      }).catch(function(e){ console.warn('TTS preview fetch error:', e); });
+   if(ttsKey){
+  var vol = s.volume !== undefined ? s.volume : 100;
+  var volGainDb = ((vol - 50) * 0.3) + 6.0;
+  var ctx = getAudioCtx();
+  if(ctx && ctx.state === 'suspended'){
+    ctx.resume().catch(function(){});
+  }
+  fetch('https://texttospeech.googleapis.com/v1/text:synthesize?key='+ttsKey,{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({
+      input:{text:'この音声で案内します'},
+      voice:{languageCode:'ja-JP',name:name},
+      audioConfig:{audioEncoding:'MP3',speakingRate:1.0,volumeGainDb:volGainDb}
+    })
+  })
+  .then(function(r){return r.json();})
+  .then(function(d){
+    if(d.audioContent){
+      var binary = atob(d.audioContent);
+      var bytes = new Uint8Array(binary.length);
+      for(var i=0;i<binary.length;i++) bytes[i]=binary.charCodeAt(i);
+      var audioCtx2 = getAudioCtx();
+      if(!audioCtx2) return;
+      audioCtx2.decodeAudioData(bytes.buffer, function(buffer){
+        var src = audioCtx2.createBufferSource();
+        var gainNode = audioCtx2.createGain();
+        gainNode.gain.value = (vol / 100) * 1.5;
+        src.buffer = buffer;
+        src.connect(gainNode);
+        gainNode.connect(audioCtx2.destination);
+        src.start(0);
+      }, function(){
+        var a = new Audio('data:audio/mp3;base64,'+d.audioContent);
+        a.volume = 1.0;
+        a.play().catch(function(){});
+      });
     } else {
-      if(!window.speechSynthesis) return;
-      window.speechSynthesis.cancel();
-      var ut = new SpeechSynthesisUtterance('この音声で案内します');
-      ut.lang = 'ja-JP'; ut.volume = 1.0; ut.rate = 1.0;
-      var voices = window.speechSynthesis.getVoices();
-      var jaVoice = voices.find(function(v){ return v.lang==='ja-JP'; });
-      if(jaVoice) ut.voice = jaVoice;
-      window.speechSynthesis.speak(ut);
+      console.warn('TTS preview error:', JSON.stringify(d.error || d));
+      fallbackTTS('この音声で案内します');
     }
+  }).catch(function(){ fallbackTTS('この音声で案内します'); });
+} else {
+  fallbackTTS('この音声で案内します');
+}
   }
 }
 
@@ -3521,7 +3527,7 @@ function saveSett(){
   var mapsKey=document.getElementById('inp-maps').value.trim();
   var geminiKey=document.getElementById('inp-gemini').value.trim();
   var ttsKey=document.getElementById('inp-tts').value.trim();
-  saveSt({mapsKey:mapsKey,geminiKey:geminiKey,ttsKey:ttsKey});
+  saveSt({mapsKey:mapsKey,geminiKey:geminiKey,ttsKey:ttsKey,ttsOn:!!ttsKey});
   // 保存後は STATE も即時更新（空でも更新して古いキーを消す）
   STATE.mapsApiKey = mapsKey;
   STATE.geminiApiKey = geminiKey;
