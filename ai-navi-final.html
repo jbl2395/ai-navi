@@ -1300,6 +1300,7 @@ var OFF_ROUTE_CONFIRM_COUNT = 3;
 // ============================================================
 var _audioCtx = null;
 var _unlockedAudio = null;
+var _ttsSlot = null;
 
 function getAudioCtx(){
   if(!_audioCtx){
@@ -1332,6 +1333,13 @@ function unlockAudio(){
       _unlockedAudio.volume = 0.001;
       _unlockedAudio.play().catch(function(){});
     }
+    _ttsSlot = new Audio();
+    _ttsSlot.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+    _ttsSlot.volume = 0.001;
+    _ttsSlot.play().then(function(){
+      _ttsSlot.pause();
+      _ttsSlot.currentTime = 0;
+    }).catch(function(){});
   }catch(e){}
   if(window.speechSynthesis){
     var ut = new SpeechSynthesisUtterance('');
@@ -2630,11 +2638,6 @@ function speakTTSOnly(text){
     var voiceName = s.voiceName || 'ja-JP-Neural2-B';
     var vol = s.volume !== undefined ? s.volume : 100;
     var volGainDb = ((vol - 50) * 0.3) + 6.0;
-    if(!_unlockedAudio){
-      _unlockedAudio = new Audio();
-      _unlockedAudio.volume = 1.0;
-    }
-    var ttsAudio = _unlockedAudio;
     fetch('https://texttospeech.googleapis.com/v1/text:synthesize?key='+ttsKey,{
       method:'POST',
       headers:{'Content-Type':'application/json'},
@@ -2647,19 +2650,31 @@ function speakTTSOnly(text){
     .then(function(r){return r.json();})
     .then(function(d){
       if(d.audioContent){
-        ttsAudio.pause();
-        ttsAudio.src = 'data:audio/mp3;base64,'+d.audioContent;
-        ttsAudio.volume = 1.0;
-        ttsAudio.play().catch(function(){
+        var slot = _ttsSlot;
+        _ttsSlot = null;
+        if(slot){
+          slot.src = 'data:audio/mp3;base64,'+d.audioContent;
+          slot.volume = 1.0;
+          slot.play().catch(function(){
+            var a = new Audio('data:audio/mp3;base64,'+d.audioContent);
+            a.volume = 1.0;
+            a.play().catch(function(){ fallbackTTS(text); });
+          });
+        } else {
           var a = new Audio('data:audio/mp3;base64,'+d.audioContent);
           a.volume = 1.0;
           a.play().catch(function(){ fallbackTTS(text); });
-        });
+        }
       } else {
         console.warn('TTS API error:', JSON.stringify(d.error || d));
         fallbackTTS(text);
       }
     })
+    .catch(function(){ fallbackTTS(text); });
+  } else {
+    fallbackTTS(text);
+  }
+}
     .catch(function(){ fallbackTTS(text); });
   } else {
     fallbackTTS(text);
@@ -3209,12 +3224,24 @@ function fallbackTTS(text){
   ut.rate=spd[s.speed||'normal']||1.0;
   ut.volume = 1.0;
   ut.pitch = 1.0;
+  function doSpeak(){
+    var voices = window.speechSynthesis.getVoices();
+    var jaVoice = voices.find(function(v){ return v.lang === 'ja-JP' && v.localService; })
+               || voices.find(function(v){ return v.lang === 'ja-JP'; })
+               || voices.find(function(v){ return v.lang.startsWith('ja'); });
+    if(jaVoice) ut.voice = jaVoice;
+    window.speechSynthesis.speak(ut);
+  }
   var voices = window.speechSynthesis.getVoices();
-  var jaVoice = voices.find(function(v){ return v.lang === 'ja-JP' && v.localService; })
-             || voices.find(function(v){ return v.lang === 'ja-JP'; })
-             || voices.find(function(v){ return v.lang.startsWith('ja'); });
-  if(jaVoice) ut.voice = jaVoice;
-  window.speechSynthesis.speak(ut);
+  if(voices.length > 0){
+    doSpeak();
+  } else {
+    window.speechSynthesis.onvoiceschanged = function(){
+      window.speechSynthesis.onvoiceschanged = null;
+      doSpeak();
+    };
+    setTimeout(doSpeak, 500);
+  }
 }
 
 function callGemini(prompt,callback){
@@ -3532,7 +3559,7 @@ function saveSett(){
   var mapsKey=document.getElementById('inp-maps').value.trim();
   var geminiKey=document.getElementById('inp-gemini').value.trim();
   var ttsKey=document.getElementById('inp-tts').value.trim();
-  saveSt({mapsKey:mapsKey,geminiKey:geminiKey,ttsKey:ttsKey,ttsOn:!!ttsKey});
+ saveSt({mapsKey:mapsKey,geminiKey:geminiKey,ttsKey:ttsKey});
   // 保存後は STATE も即時更新（空でも更新して古いキーを消す）
   STATE.mapsApiKey = mapsKey;
   STATE.geminiApiKey = geminiKey;
