@@ -2626,25 +2626,34 @@ function showAiBubbleOnly(text){
 function speakTTSOnly(text){
   var s=loadSt();
   if(s.voice===false) return;
-  // ttsOnがfalseに明示されている場合はブラウザTTSへ
   if(s.ttsOn === false){ fallbackTTS(text); return; }
 
-  // TTS APIキー未設定時はMaps APIキーで代用（同プロジェクトなら動作する）
   var ttsKey = s.ttsKey || STATE.ttsApiKey || s.mapsKey || STATE.mapsApiKey || '';
   var ttsEnabled = !!ttsKey;
-  if(ttsEnabled){
-    var spd={slow:0.8,normal:1.0,fast:1.3};
-    var rate=spd[s.speed||'normal']||1.0;
-    var voiceName = s.voiceName || 'ja-JP-Neural2-B';
-    var vol = s.volume !== undefined ? s.volume : 100;
-    var volGainDb = ((vol - 50) * 0.3) + 6.0;
-    if(!_unlockedAudio){
-      _unlockedAudio = new Audio();
-      _unlockedAudio.volume = 1.0;
-    }
-    var ttsAudio = _unlockedAudio;
+  if(!ttsEnabled){ fallbackTTS(text); return; }
+
+  var spd={slow:0.8,normal:1.0,fast:1.3};
+  var rate=spd[s.speed||'normal']||1.0;
+  var voiceName = s.voiceName || 'ja-JP-Neural2-B';
+  var vol = s.volume !== undefined ? s.volume : 100;
+  var volGainDb = ((vol - 50) * 0.3) + 6.0;
+
+  // ★修正①: _unlockedAudio が null なら unlock を試みてから進む
+  // （タップ外でnew Audio()を生成しないよう、既存インスタンスを必ず使う）
+  if(!_unlockedAudio){
+    // この時点でタップ外なら再生できないが、unlockAudio()は次タップで効くので許容
+    console.warn('[TTS] _unlockedAudio not ready, attempting fallback');
+    fallbackTTS(text);
+    return;
+  }
+
+  // ★修正②: AudioContext が suspended なら resume してから fetch
+  var ctx = getAudioCtx();
+  var doFetch = function(){
     fetch('https://texttospeech.googleapis.com/v1/text:synthesize?key='+ttsKey,{
       method:'POST',
+      // ★修正③: iOSのCORS対策 - credentialsは'omit'にする
+      credentials: 'omit',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
         input:{text:text},
@@ -2652,28 +2661,75 @@ function speakTTSOnly(text){
         audioConfig:{audioEncoding:'MP3',speakingRate:rate,volumeGainDb:volGainDb}
       })
     })
-    .then(function(r){return r.json();})
+    .then(function(r){
+      // ★修正④: HTTPレベルのエラーをここで捕捉してalert
+      if(!r.ok){
+        return r.json().then(function(errBody){
+          var msg = '[TTS] HTTP '+r.status+'\n';
+          if(r.status===400) msg += '❌ リクエスト不正（音声名やパラメータを確認）\n';
+          if(r.status===403) msg += '❌ APIキーが無効か、TTS APIが有効化されていません\n';
+          if(r.status===429) msg += '❌ APIの利用制限に達しました\n';
+          msg += JSON.stringify(errBody, null, 2);
+          alert(msg);
+          fallbackTTS(text);
+          return null;
+        }).catch(function(){
+          alert('[TTS] HTTP '+r.status+' エラー（レスポンス解析失敗）');
+          fallbackTTS(text);
+          return null;
+        });
+      }
+      return r.json();
+    })
     .then(function(d){
+      if(!d) return; // エラー時はnullが返るのでスキップ
       if(d.audioContent){
+        var ttsAudio = _unlockedAudio;
         ttsAudio.pause();
+        // ★修正⑤: srcをセットする前にonendedをリセット
+        ttsAudio.onended = null;
         ttsAudio.src = 'data:audio/mp3;base64,'+d.audioContent;
         ttsAudio.volume = 1.0;
-        ttsAudio.play().catch(function(){
-          var a = new Audio('data:audio/mp3;base64,'+d.audioContent);
-          a.volume = 1.0;
-          a.play().catch(function(){ fallbackTTS(text); });
+        ttsAudio.play().catch(function(playErr){
+          // ★修正⑥: playエラーの内容をコンソールに詳細出力
+          console.warn('[TTS] play() rejected:', playErr.name, playErr.message);
+          // NotAllowedError = ユーザー操作なしで再生しようとした
+          if(playErr.name === 'NotAllowedError'){
+            console.warn('[TTS] NotAllowedError: ユーザー操作が必要です。unlockAudio()が呼ばれていない可能性があります。');
+          }
+          fallbackTTS(text);
         });
       } else {
-        console.warn('TTS API error:', JSON.stringify(d.error || d));
+        // APIは200だが audioContent がない（通常は起きない）
+        var errDetail = JSON.stringify(d.error || d);
+        console.warn('[TTS] API error response:', errDetail);
+        alert('[TTS] APIレスポンス異常:\n'+errDetail);
         fallbackTTS(text);
       }
     })
-    .catch(function(){ fallbackTTS(text); });
+    .catch(function(fetchErr){
+      // ★修正⑦: ネットワーク/CORSエラーを詳細表示
+      console.warn('[TTS] fetch catch:', fetchErr);
+      var msg = '[TTS] 通信エラー\n';
+      if(fetchErr.message){
+        msg += fetchErr.message + '\n';
+        if(fetchErr.message.indexOf('Failed to fetch') !== -1 || fetchErr.message.indexOf('NetworkError') !== -1){
+          msg += '→ CORSエラーまたはネットワーク遮断の可能性があります\n';
+          msg += '→ APIキーのリファラー制限を確認してください（GitHub PagesのURLを許可しているか）';
+        }
+      }
+      alert(msg);
+      fallbackTTS(text);
+    });
+  };
+
+  // ★修正①続き: AudioContext suspended なら resume してから fetch
+  if(ctx && ctx.state === 'suspended'){
+    ctx.resume().then(doFetch).catch(doFetch);
   } else {
-    fallbackTTS(text);
+    doFetch();
   }
 }
-
 function checkTollRoad(result){
   var hasToll = false;
   var steps = result.routes[0].legs[0].steps;
