@@ -2636,7 +2636,7 @@ function speakTTSOnly(text){
   var rate=spd[s.speed||'normal']||1.0;
   var voiceName = s.voiceName || 'ja-JP-Neural2-B';
   var vol = s.volume !== undefined ? s.volume : 100;
-  var volGainDb = ((vol - 50) * 0.3) + 6.0;
+  var volGainDb = Math.min(16.0, Math.max(-96.0, ((vol - 50) * 0.3) + 6.0));
 
   // ★修正①: _unlockedAudio が null なら unlock を試みてから進む
   // （タップ外でnew Audio()を生成しないよう、既存インスタンスを必ず使う）
@@ -3519,7 +3519,7 @@ function setVoiceType(name, silent, preview){
     var ttsKey = liveTts || s.ttsKey || STATE.ttsApiKey || liveMaps || s.mapsKey || STATE.mapsApiKey || '';
    if(ttsKey){
   var vol = s.volume !== undefined ? s.volume : 100;
-  var volGainDb = ((vol - 50) * 0.3) + 6.0;
+  var volGainDb = Math.min(16.0, Math.max(-96.0, ((vol - 50) * 0.3) + 6.0));
   var ctx = getAudioCtx();
   if(ctx && ctx.state === 'suspended'){
     ctx.resume().catch(function(){});
