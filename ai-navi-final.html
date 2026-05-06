@@ -2808,7 +2808,8 @@ function setNavWaitingMode(map,origin,destGeo){
   btn.innerHTML='⏸<br>一時停止';
   btn.classList.remove('paused');
 
-  setNavInstruction('▶','「案内開始」を押して','');
+ setNavInstruction('▶','「案内開始」を押して','');
+document.getElementById('nav-arrow').classList.add('nav-arrow-play');
 
   if(navigator.permissions){
     navigator.permissions.query({name:'geolocation'}).then(function(result){
