@@ -1121,7 +1121,7 @@ function handleSetDestinationFlow(placeName, isWaypoint){
       STATE.geminiFlowData = {placeName: placeName, geoData: geoData, isWaypoint: isWaypoint};
 
       // マイク自動ON
-      setTimeout(function(){ startConfirmMicFlow(); }, 2500);
+      setTimeout(function(){ startConfirmMicFlow(); }, Math.max(3000, confirmMsg.length * 150));
     } else {
       var errMsg = '「'+placeName+'」が見つかりませんでした。もう少し詳しく入力してください。';
       speakTTSOnly(errMsg);
@@ -1364,7 +1364,7 @@ function handleSetDestinationFlowInNav(placeName, isWaypoint){
       speakTTSOnly(confirmMsg); showAiBubble(confirmMsg);
       STATE.geminiFlowState = isWaypoint ? 'confirm_waypoint' : 'confirm_dest';
       STATE.geminiFlowData = {placeName: placeName, geoData: geoData, isWaypoint: isWaypoint};
-      setTimeout(function(){ startNavConfirmMicFlow(); }, 2500);
+     setTimeout(function(){ startNavConfirmMicFlow(); }, Math.max(3000, confirmMsg.length * 150));
     } else {
       speakTTSOnly('「'+placeName+'」が見つかりませんでした。もう少し詳しく教えてください。');
       setTimeout(function(){ startNavMicFlow(); }, 2500);
