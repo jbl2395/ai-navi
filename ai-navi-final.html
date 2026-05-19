@@ -486,7 +486,7 @@ body.nav-mode #zoom-ctrl{display:flex;}
       <div class="sel-btns">
         <!-- ★修正①: 女性Bのvoiceを ja-JP-Wavenet-B に変更 -->
         <button class="sel-btn sel" id="voice-a" onclick="setVoiceType('ja-JP-Neural2-B',false,true)">女性A (高品質)</button>
-        <button class="sel-btn" id="voice-b" onclick="setVoiceType('ja-JP-Wavenet-B',false,true)">女性B (自然)</button>
+        <button class="sel-btn" id="voice-b" onclick="setVoiceType('ja-JP-Neural2-A',false,true)">女性B (自然)</button>
         <button class="sel-btn" id="voice-c" onclick="setVoiceType('ja-JP-Standard-A',false,true)">女性C (明瞭)</button>
       </div>
     </div>
@@ -754,8 +754,8 @@ var STATE = {
 };
 
 var USER_PAN_RECENTER_MS = 8000;
-var OFF_ROUTE_THRESHOLD_M = 50;
-var OFF_ROUTE_CONFIRM_COUNT = 4;
+var OFF_ROUTE_THRESHOLD_M = 25;
+var OFF_ROUTE_CONFIRM_COUNT = 2;
 
 // ============================================================
 // iOS AudioContext アンロック
@@ -1762,7 +1762,7 @@ function checkOffRoute(currentPos){
   if(!STATE.routeSteps||STATE.routeSteps.length===0)return;
   if(STATE.stepIdx>=STATE.routeSteps.length)return;
   var minDist=Infinity;
-  var startIdx=Math.max(0,STATE.stepIdx-1);var endIdx=Math.min(STATE.routeSteps.length-1,STATE.stepIdx+2);
+  var startIdx=Math.max(0,STATE.stepIdx);var endIdx=Math.min(STATE.routeSteps.length-1,STATE.stepIdx+1);
   for(var si=startIdx;si<=endIdx;si++){
     var step=STATE.routeSteps[si];
     if(!step.path)continue;
@@ -2411,7 +2411,8 @@ function startGpsTracking(map,destGeo,fromStepIdx){
         // ★ 5km以上道なり判定 (現ステップが直進系かつdistance≥5000m)
         if(!STATE.spokenStraight)STATE.spokenStraight={};
         var stepDistM=nextStep.distance?nextStep.distance.value:0;
-        if(!isTurn&&stepDistM>=5000&&!STATE.spokenStraight[phaseKey]){
+        var m5=nextStep.maneuver||'';
+if(!/turn|u-turn/.test(m5)&&stepDistM>=5000&&!STATE.spokenStraight[phaseKey]){
           STATE.spokenStraight[phaseKey]=true;
           var kmStr=(stepDistM/1000).toFixed(0);
           speakTTS(kmStr+'キロ以上道なりです。');
@@ -2585,7 +2586,7 @@ function rerouteToNewDest(newDest){
       var container=document.getElementById('maps-div');
       var map=new google.maps.Map(container,{center:{lat:newGeoData.lat,lng:newGeoData.lng},zoom:14,mapTypeId:'roadmap',renderingType:google.maps.RenderingType.VECTOR,tiltInteractionEnabled:true,headingInteractionEnabled:true,tilt:0,disableDefaultUI:true,gestureHandling:'greedy'});
       STATE.currentMap=map;attachInteractionListeners(map);
-      setTimeout(function(){document.getElementById('reroute-overlay').classList.remove('on');calcRouteAndDisplay(map,STATE.originGeoData||{lat:newGeoData.lat+0.02,lng:newGeoData.lng-0.015},newGeoData,newDest);speakTTS('目的地を'+newDest+'に変更しました。ルートを再計算しています。');},1200);
+      setTimeout(function(){document.getElementById('reroute-overlay').classList.remove('on');calcRouteAndDisplay(map,STATE.originGeoData||{lat:newGeoData.lat+0.02,lng:newGeoData.lng-0.015},newGeoData,newDest);speakTTS('目的地を'+newDest+'に設定しました。ルートを再計算しています。');},1200);
     }else{document.getElementById('reroute-overlay').classList.remove('on');setNavInstruction('⚠','目的地が見つかりません','');}
   })
   .catch(function(){document.getElementById('reroute-overlay').classList.remove('on');setNavInstruction('⚠','通信エラー','');});
@@ -2729,11 +2730,11 @@ function setRoute(val,silent){['highway','normal'].forEach(function(r){document.
 function setUnit(val,silent){['km','mi'].forEach(function(u){document.getElementById('unit-'+u).classList.toggle('sel',u===val);});if(!silent)saveSt({unit:val});}
 function setOrient(val,silent){['heading','north'].forEach(function(o){var el=document.getElementById('orient-'+o);if(el)el.classList.toggle('sel',o===val);});if(!silent){saveSt({orient:val});updateOrientBadge();}}
 
-// ★修正①: setVoiceType の map に ja-JP-Wavenet-B を追加
+// ★修正①: setVoiceType の map に ja-JP-Neural2-A を追加
 function setVoiceType(name,silent,preview){
   if(preview)unlockAudio();
   ['voice-a','voice-b','voice-c'].forEach(function(id){var el=document.getElementById(id);if(el)el.classList.remove('sel');});
-  // ★修正①: 女性B を ja-JP-Wavenet-B に変更
+  // ★修正①: 女性B を ja-JP-Neural2-A に変更
   var map={'ja-JP-Neural2-B':'voice-a','ja-JP-Wavenet-B':'voice-b','ja-JP-Standard-A':'voice-c'};
   var btnId=map[name];if(btnId){var el=document.getElementById(btnId);if(el)el.classList.add('sel');}
   if(!silent)saveSt({voiceName:name});
