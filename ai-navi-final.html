@@ -2735,7 +2735,7 @@ function setVoiceType(name,silent,preview){
   if(preview)unlockAudio();
   ['voice-a','voice-b','voice-c'].forEach(function(id){var el=document.getElementById(id);if(el)el.classList.remove('sel');});
   // ★修正①: 女性B を ja-JP-Neural2-A に変更
-  var map={'ja-JP-Neural2-B':'voice-a','ja-JP-Wavenet-B':'voice-b','ja-JP-Standard-A':'voice-c'};
+  var map={'ja-JP-Neural2-B':'voice-a','ja-JP-Neural2-A':'voice-b','ja-JP-Standard-A':'voice-c'};
   var btnId=map[name];if(btnId){var el=document.getElementById(btnId);if(el)el.classList.add('sel');}
   if(!silent)saveSt({voiceName:name});
   if(preview){
