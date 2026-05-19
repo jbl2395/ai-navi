@@ -2389,7 +2389,7 @@ function startGpsTracking(map,destGeo,fromStepIdx){
         // 分岐かどうかを判定するヘルパー（maneuverがfork/merge/ramp/slightの場合は分岐扱い）
         function isFork(step){
           var m=step.maneuver||'';
-          return /fork|merge|ramp|slight/.test(m);
+          return /fork|merge|ramp/.test(m);
         }
         // 分岐方向の発話フレーズを返す
         function getForkPhrase(dir){
@@ -2407,6 +2407,7 @@ function startGpsTracking(map,destGeo,fromStepIdx){
         var aheadTurnName=lookAheadStep?getTurnName(lookAheadStep):'';
         var aheadIsTurn=(aheadTurnDir==='右折'||aheadTurnDir==='左折'||aheadTurnDir==='Uターン');
         var aheadIsFork=lookAheadStep?isFork(lookAheadStep):false;
+        var distToAhead=lookAheadStep?google.maps.geometry.spherical.computeDistanceBetween(cur,lookAheadStep.end_location):distToNext;
         // ★ 5km以上道なり判定 (現ステップが直進系かつdistance≥5000m)
         if(!STATE.spokenStraight)STATE.spokenStraight={};
         var stepDistM=nextStep.distance?nextStep.distance.value:0;
@@ -2416,7 +2417,7 @@ function startGpsTracking(map,destGeo,fromStepIdx){
           speakTTS(kmStr+'キロ以上道なりです。');
         }
         // ★ 1km前案内（左折・右折のみ）← 次の交差点(lookAhead)を案内
-        if(aheadIsTurn&&distToNext>300&&distToNext<=1100&&!ph.has('1km')){
+        if(aheadIsTurn&&distToAhead>300&&distToAhead<=1100&&!ph.has('1km')){
           ph.add('1km');
           var msg1km;
           if(aheadIsFork){
@@ -2429,7 +2430,7 @@ function startGpsTracking(map,destGeo,fromStepIdx){
           speakTTS(msg1km);
         }
         // ★ 300m前案内（左折・右折のみ）← 次の交差点(lookAhead)を案内
-        if(aheadIsTurn&&distToNext>80&&distToNext<=350&&!ph.has('300m')){
+        if(aheadIsTurn&&distToAhead>80&&distToAhead<=350&&!ph.has('300m')){
           ph.add('300m');
           var msg300;
           if(aheadIsFork){
@@ -2442,7 +2443,7 @@ function startGpsTracking(map,destGeo,fromStepIdx){
           speakTTS(msg300);
         }
         // ★ 80m前案内 ← 次の交差点(lookAhead)を案内
-        if(aheadIsTurn&&distToNext>10&&distToNext<=90&&!ph.has('50m')){
+        if(aheadIsTurn&&distToAhead>10&&distToAhead<=90&&!ph.has('50m')){
           ph.add('50m');
           var msg50;
           if(aheadIsFork){
