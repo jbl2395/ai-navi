@@ -755,6 +755,7 @@ var STATE = {
 
 var USER_PAN_RECENTER_MS = 8000;
 var OFF_ROUTE_THRESHOLD_M = 25;
+var ARRIVAL_THRESHOLD_M = 50;  
 var OFF_ROUTE_CONFIRM_COUNT = 2;
 
 // ============================================================
@@ -1775,11 +1776,18 @@ function checkOffRoute(currentPos){
 
 function distToSegment(p,a,b){
   try{
-    var ab=google.maps.geometry.spherical.computeDistanceBetween(a,b);
-    if(ab<1)return google.maps.geometry.spherical.computeDistanceBetween(p,a);
-    var ap=google.maps.geometry.spherical.computeDistanceBetween(a,p);var bp=google.maps.geometry.spherical.computeDistanceBetween(b,p);
-    var s=(ab+ap+bp)/2;var area2=s*(s-ab)*(s-ap)*(s-bp);if(area2<0)area2=0;
-    return 2*Math.sqrt(area2)/ab;
+    var R=6371000;
+    var toRad=function(d){return d*Math.PI/180;};
+    var lat1=toRad(a.lat()),lng1=toRad(a.lng());
+    var lat2=toRad(b.lat()),lng2=toRad(b.lng());
+    var lat0=toRad(p.lat()),lng0=toRad(p.lng());
+    var x0=(lng0-lng1)*Math.cos((lat0+lat1)/2)*R;var y0=(lat0-lat1)*R;
+    var x1=(lng2-lng1)*Math.cos((lat1+lat2)/2)*R;var y1=(lat2-lat1)*R;
+    var len2=x1*x1+y1*y1;
+    if(len2<0.0001)return Math.sqrt(x0*x0+y0*y0);
+    var t=Math.max(0,Math.min(1,(x0*x1+y0*y1)/len2));
+    var dx=x0-t*x1;var dy=y0-t*y1;
+    return Math.sqrt(dx*dx+dy*dy);
   }catch(e){return Infinity;}
 }
 
@@ -2241,7 +2249,7 @@ function checkTollRoad(result){
 function fitMapToRoute(map,result,onReady){
   var bounds=new google.maps.LatLngBounds();result.routes[0].overview_path.forEach(function(p){bounds.extend(p);});
   try{map.setTilt(0);}catch(e){}try{map.setHeading(0);}catch(e){}
-  map.fitBounds(bounds,{top:80,bottom:120,left:20,right:20});
+  if(STATE.userZoom!==null&&typeof STATE.userZoom==='number'){map.setZoom(STATE.userZoom);}else{map.fitBounds(bounds,{top:80,bottom:120,left:20,right:20});}
   var done=false;var listener=google.maps.event.addListenerOnce(map,'idle',function(){if(done)return;done=true;if(typeof onReady==='function')onReady();});
   setTimeout(function(){if(done)return;done=true;try{google.maps.event.removeListener(listener);}catch(e){}if(typeof onReady==='function')onReady();},2000);
 }
@@ -2324,7 +2332,7 @@ function calcRouteAndStartNav(map,origin,destGeo,destName){
 // GPSトラッキング
 // ============================================================
 function startGpsTracking(map,destGeo,fromStepIdx){
-  STATE.navActive=true;STATE.navStarted=true;STATE.navPaused=false;STATE.stepIdx=fromStepIdx;
+  STATE.navActive=true;STATE.navStarted=true;STATE.navPaused=false;STATE.stepIdx=fromStepIdx;STATE._arrivalFired=false;
   STATE.userPanActive=false;STATE.offRouteCount=0;STATE.rerouteInProgress=false;
   if(STATE.userPanTimer){clearTimeout(STATE.userPanTimer);STATE.userPanTimer=null;}
   var btn=document.getElementById('btn-pause');btn.innerHTML='⏸<br>一時停止';btn.classList.remove('paused');
@@ -2455,7 +2463,7 @@ if(!/turn|u-turn/.test(m5)&&stepDistM>=5000&&!STATE.spokenStraight[phaseKey]){
           speakTTS(msg50);
         }
         // ★ 交差点到達 → ステップ進行
-        if(distToNext<15){
+        if(distToNext<30){
           // 曲がる瞬間の発話はlookAhead(次のstep)で判定（二重発話修正）
           if(aheadIsTurn&&!ph.has('now')){
             ph.add('now');
@@ -2487,6 +2495,7 @@ if(!/turn|u-turn/.test(m5)&&stepDistM>=5000&&!STATE.spokenStraight[phaseKey]){
           }
         }
         var remDist=google.maps.geometry.spherical.computeDistanceBetween(cur,new google.maps.LatLng(destGeo.lat,destGeo.lng));
+        if(remDist<=ARRIVAL_THRESHOLD_M&&STATE.navActive&&!STATE._arrivalFired){STATE._arrivalFired=true;onArrival();return;}
         document.getElementById('nav-dist').textContent=(remDist/1000).toFixed(1);
         var now=new Date();now.setSeconds(now.getSeconds()+Math.round(remDist/12));
         document.getElementById('nav-eta').textContent=String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
