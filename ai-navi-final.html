@@ -2934,9 +2934,9 @@ function startCompass(map){
     if(e.webkitCompassHeading!==undefined&&e.webkitCompassHeading!==null){
       // ★修正⑤: webkitCompassHeadingは絶対北基準。横画面時のみ補正が必要。
       // window.orientation: 縦=0, 右横=-90, 左横=90
-      // 右横(-90)は実際に右へ90°回転→+90補正なので -window.orientation が正しい
+      // 右横(+90)は実際に左へ90°回転→-90補正なので +window.orientation が正しい
       var screenRot=0;
-      if(typeof window.orientation==='number'){screenRot=-window.orientation;}
+      if(typeof window.orientation==='number'){screenRot=+window.orientation;}
       else if(window.screen&&window.screen.orientation){var a=window.screen.orientation.angle||0;screenRot=(a===90)?90:(a===270)?-90:0;}
       compassHeading=(e.webkitCompassHeading+screenRot+360)%360;
     }else if(e.alpha!==null&&e.alpha!==undefined){
