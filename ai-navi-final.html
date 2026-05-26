@@ -2930,8 +2930,10 @@ function startCompass(map){
     if(STATE.gpsHeadingActive)return;
     var compassHeading;
     if(e.webkitCompassHeading!==undefined&&e.webkitCompassHeading!==null){
-      // webkitCompassHeadingはiOSが画面向きを自動補正済みのため補正不要
-      compassHeading=(e.webkitCompassHeading+360)%360;
+     // 横画面時のみ-90補正
+      var screenRot=0;
+      if(Math.abs(window.orientation)===90){screenRot=-90;}
+      compassHeading=(e.webkitCompassHeading+screenRot+360)%360;
     }else if(e.alpha!==null&&e.alpha!==undefined){
       // alphaは反時計回り基準なので360-alphaで北基準に変換
       var screenAngle=0;
