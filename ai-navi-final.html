@@ -2746,7 +2746,7 @@ function rerouteToNewDest(newDest){
       var container=document.getElementById('maps-div');
       var map=new google.maps.Map(container,{center:{lat:newGeoData.lat,lng:newGeoData.lng},zoom:14,mapTypeId:'roadmap',renderingType:google.maps.RenderingType.VECTOR,tiltInteractionEnabled:true,headingInteractionEnabled:true,tilt:0,disableDefaultUI:true,gestureHandling:'greedy'});
       STATE.currentMap=map;attachInteractionListeners(map);
-      setTimeout(function(){document.getElementById('reroute-overlay').classList.remove('on');calcRouteAndDisplay(map,STATE.originGeoData||{lat:newGeoData.lat+0.02,lng:newGeoData.lng-0.015},newGeoData,newDest);speakTTS('目的地を'+newDest+'に変更しました。ルートを再計算しています。');},1200);
+      setTimeout(function(){document.getElementById('reroute-overlay').classList.remove('on');calcRouteAndDisplay(map,STATE.originGeoData||{lat:newGeoData.lat+0.02,lng:newGeoData.lng-0.015},newGeoData,newDest);speakTTS('目的地を'+newDest+'に設定しました。ルートを再計算しています。');},1200);
     }else{document.getElementById('reroute-overlay').classList.remove('on');setNavInstruction('⚠','目的地が見つかりません','');}
   })
   .catch(function(){document.getElementById('reroute-overlay').classList.remove('on');setNavInstruction('⚠','通信エラー','');});
