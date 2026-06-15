@@ -3989,10 +3989,10 @@ function startCompass(map){
     }
     var compassHeading;
     if(e.webkitCompassHeading!==undefined&&e.webkitCompassHeading!==null){
-      compassHeading=(e.webkitCompassHeading-screenAngle+720)%360;
+      compassHeading=(e.webkitCompassHeading+screenAngle+720)%360;
     }else if(e.alpha!==null&&e.alpha!==undefined){
       // alphaは端末基準・反時計回り。360-alphaで北基準にし、画面回転分を引く。
-      compassHeading=(360-e.alpha-screenAngle+720)%360;
+      compassHeading=(360-e.alpha+screenAngle+720)%360;
     }else{return;}
     // ★偏角は一度だけ適用（getCorrectedHeading側の二重適用は撤去済み）。基準校正込み。
     var declSlider=loadSt().declination!==undefined?loadSt().declination:0;
