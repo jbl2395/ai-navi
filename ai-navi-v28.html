@@ -3009,8 +3009,9 @@ function addWaypointToNav(placeName, geoData){
       var dr = new google.maps.DirectionsRenderer({
         map: STATE.currentMap,
         suppressMarkers: true,
-        polylineOptions:{strokeColor:'#ffaa00',strokeOpacity:0.88,strokeWeight:6}
+        polylineOptions:{strokeColor:'#ffaa00',strokeOpacity:0.88,strokeWeight:routeLineWeight()}
       });
+      dr._rlColor='#ffaa00';
       dr.setDirections(result);
       STATE.directionsRenderer = dr;
       var leg = result.routes[0].legs[0];
@@ -3239,21 +3240,43 @@ function programmaticSetOptions(map,opts){ if(!map)return; try{map.setOptions(op
 function guardProgZoom(ms){STATE._progZoomUntil=Date.now()+(ms||2500);}
 
 // ★ルート線の太さを道幅追従で算出。センターライン基準=道幅5.5m。
-//   拡大して道幅が現在の太さ(6px)を超えたらそれに見合わせ、広域では6pxを維持。
-function routeLineWeight(){
-  var map=STATE.currentMap; if(!map)return 6;
+//   基準は「スケール表示20m」(=zoom 18)。
+//   ・20mより広域(50m/100m/…)  … 20m時の太さのまま固定（従来の見た目を維持）
+//   ・20mより詳細(10m=z19, 5m=z20) … 実際の道幅に追従して太くする
+var ROUTE_W_ROAD_M    = 5.5; // 想定道路幅(m)。太さの基準になる値
+var ROUTE_W_BASE_ZOOM = 18;  // 太さの基準ズーム(=スケール表示20m)。これ未満は基準値で固定
+var ROUTE_W_MIN_PX    = 6;   // 最小太さ(px)
+function routeLineWeight(mapArg){
+  var map=mapArg||STATE.currentMap; if(!map)return ROUTE_W_MIN_PX;
   var z; try{z=map.getZoom();}catch(e){z=16;} if(typeof z!=='number')z=16;
+  // 20mより広域側は z18 として計算するので、太さは20m時と同じまま増減しない
+  var zEff=(z<ROUTE_W_BASE_ZOOM)?ROUTE_W_BASE_ZOOM:z;
   var lat=((STATE.lastLat!=null)?STATE.lastLat:35)*Math.PI/180;
-  var mPerPx=156543.03392*Math.cos(lat)/Math.pow(2,z);
-  return Math.max(6, Math.round(5.5/mPerPx)); // 道幅5.5m、最小6px
+  var mPerPx=156543.03392*Math.cos(lat)/Math.pow(2,zEff);
+  return Math.max(ROUTE_W_MIN_PX, Math.round(ROUTE_W_ROAD_M/mPerPx));
 }
-// ★現在表示中のルート線の太さをズームに合わせて更新（リレンダ不要のsetOptions）
-function refreshRouteLineWeight(){
+// ★現在表示中のルート線の太さをズームに合わせて更新。
+//   DirectionsRenderer は setOptions(polylineOptions) だけだと描画済みの線に
+//   反映されないことがあるため、保持中の DirectionsResult を再適用して確実に描き直す。
+//   （zoom_changed はカメラ補間中に連続発火するので、太さが変わった時だけ・120ms遅延で実行）
+var _rlAppliedW=0, _rlTimer=null;
+function refreshRouteLineWeight(force){
   if(!STATE.directionsRenderer)return;
-  try{
-    var col=STATE.directionsRenderer._rlColor||'#00c8ff';
-    STATE.directionsRenderer.setOptions({preserveViewport:true,suppressMarkers:true,polylineOptions:{strokeColor:col,strokeOpacity:0.88,strokeWeight:routeLineWeight()}});
-  }catch(e){}
+  var w=routeLineWeight();
+  if(!force && w===_rlAppliedW)return;
+  _rlAppliedW=w;
+  if(_rlTimer)clearTimeout(_rlTimer);
+  _rlTimer=setTimeout(function(){
+    _rlTimer=null;
+    var dr=STATE.directionsRenderer; if(!dr)return;
+    var col=dr._rlColor||'#00c8ff';
+    var wNow=routeLineWeight(); _rlAppliedW=wNow;
+    try{
+      dr.setOptions({preserveViewport:true,suppressMarkers:true,polylineOptions:{strokeColor:col,strokeOpacity:0.88,strokeWeight:wNow}});
+      var res=null; try{res=dr.getDirections();}catch(_e){res=null;}
+      if(res){try{dr.setDirections(res);}catch(_e2){}}
+    }catch(e){}
+  },120);
 }
 
 function attachInteractionListeners(map){
@@ -7853,8 +7876,8 @@ function showAiBubble(text){var el=document.getElementById('ai-bubble');el.textC
 var ZOOM_MIN=5,ZOOM_MAX=20;
 function zoomToScaleText(zoom){var scales={5:'500km',6:'200km',7:'100km',8:'50km',9:'20km',10:'10km',11:'5km',12:'2km',13:'1km',14:'500m',15:'200m',16:'100m',17:'50m',18:'20m',19:'10m',20:'5m'};var z=Math.round(zoom);return scales[z]||'--';}
 function updateScaleDisplay(zoom){var el=document.getElementById('scale-display');if(el)el.textContent=zoomToScaleText(zoom);}
-function onZoomOut(){if(!STATE.currentMap)return;var z=currentZoom(STATE.currentMap,16);var newZ=Math.max(ZOOM_MIN,z-1);STATE.userZoom=newZ;try{STATE.currentMap.setZoom(newZ);}catch(e){}updateScaleDisplay(newZ);saveSt({savedZoom:newZ});}
-function onZoomIn(){if(!STATE.currentMap)return;var z=currentZoom(STATE.currentMap,16);var newZ=Math.min(ZOOM_MAX,z+1);STATE.userZoom=newZ;try{STATE.currentMap.setZoom(newZ);}catch(e){}updateScaleDisplay(newZ);saveSt({savedZoom:newZ});}
+function onZoomOut(){if(!STATE.currentMap)return;var z=currentZoom(STATE.currentMap,16);var newZ=Math.max(ZOOM_MIN,z-1);STATE.userZoom=newZ;try{STATE.currentMap.setZoom(newZ);}catch(e){}updateScaleDisplay(newZ);refreshRouteLineWeight();saveSt({savedZoom:newZ});}
+function onZoomIn(){if(!STATE.currentMap)return;var z=currentZoom(STATE.currentMap,16);var newZ=Math.min(ZOOM_MAX,z+1);STATE.userZoom=newZ;try{STATE.currentMap.setZoom(newZ);}catch(e){}updateScaleDisplay(newZ);refreshRouteLineWeight();saveSt({savedZoom:newZ});}
 function setViewportForMap(enable){}
 
 function showNavUI(dest,mode,tagText){
