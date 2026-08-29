@@ -9807,7 +9807,14 @@ function _xsUpdate(deg,name){
     if(name){
       var L=name.length,fs=(L<=3)?38:((L===4)?33:((L===5)?27:((L===6)?23:19)));
       nm.innerHTML='<div class="xs-jp" style="font-size:'+fs+'px">'+name+'</div><div class="xs-sub">交差点</div>';
-    }else nm.innerHTML='';
+    }else{
+      // ★v38: 交差点名が取れない場合は方向の言葉を入れる（空白の看板にしない）
+      var a=Math.abs(deg),w;
+      if(a>=160)w='Ｕターン';
+      else if(a<C.straightDeg)w='直進';
+      else w=(deg>0)?'右へ':'左へ';
+      nm.innerHTML='<div class="xs-jp" style="font-size:34px">'+w+'</div>';
+    }
   }
   _xsPlace();
   el.classList.add('show');
