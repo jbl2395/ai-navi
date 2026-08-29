@@ -281,17 +281,18 @@ body.nav-mode #nav-hud{display:flex;}
    立体感はタイル外周（広域〜詳細の周囲）のみに付け、
    〇〇m は左右に本体色の縁を残した「窓」＝すりガラスの平面とする。 */
 #zoom-ctrl{position:fixed;bottom:calc(var(--safe-bot) + 74px);left:12px;display:none;flex-direction:column;gap:0;z-index:616;pointer-events:all;justify-content:flex-end;
-  width:52px;background:linear-gradient(180deg,rgba(16,24,36,0.82),rgba(0,4,10,0.70));
+  width:52px;background:transparent;
   border:1px solid rgba(255,255,255,0.26);border-radius:10px;
-  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
   box-shadow:inset 0 1px 0 rgba(255,255,255,0.30),inset 0 -2px 5px rgba(0,0,0,0.32),0 4px 10px rgba(0,0,0,0.36);
   overflow:hidden;}
 body.nav-mode #zoom-ctrl{display:flex;}
 /* 広域・詳細：タイルの一部なので単体の枠・影は持たせない。文字は白 */
-.zoom-ctrl-btn{width:100%;height:36px;background:transparent;border:0;border-radius:0;color:#fff;font-size:11px;font-family:'Orbitron',sans-serif;font-weight:700;letter-spacing:0.04em;cursor:pointer;touch-action:manipulation;transition:background 0.15s;text-shadow:0 1px 2px rgba(0,0,0,0.7);padding:0;}
-.zoom-ctrl-btn:active{background:rgba(0,190,255,0.28);}
+.zoom-ctrl-btn{width:100%;height:36px;background:linear-gradient(180deg,rgba(16,24,36,0.84),rgba(0,4,10,0.72));backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:0;border-radius:0;color:#fff;font-size:11px;font-family:'Orbitron',sans-serif;font-weight:700;letter-spacing:0.04em;cursor:pointer;touch-action:manipulation;transition:background 0.15s;text-shadow:0 1px 2px rgba(0,0,0,0.7);padding:0;}
+.zoom-ctrl-btn:active{background:linear-gradient(180deg,rgba(0,160,215,0.62),rgba(0,95,145,0.52));}
 /* 〇〇m 窓：平面のすりガラス。左右のマージンでタイル本体色が縁として残る */
-#scale-display{height:36px;margin:3px 5px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.45);border:1px solid rgba(255,255,255,0.62);border-radius:6px;color:#000;font-size:10px;font-family:'Orbitron',sans-serif;font-weight:700;letter-spacing:0.02em;text-align:center;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);box-shadow:none;pointer-events:none;flex:none;}
+/* ★v37c: 〇〇m は「穴」。背後にタイルの黒を敷かず地図がそのまま透ける。
+   左右の縁だけ本体色を残し、内側の影で窪んで見えるようにする（縁も窓も立体感あり）。 */
+#scale-display{height:42px;margin:0;flex:none;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.34);border-top:0;border-bottom:0;border-left:5px solid rgba(11,19,31,0.82);border-right:5px solid rgba(11,19,31,0.82);border-radius:0;color:#000;font-size:11px;font-family:'Orbitron',sans-serif;font-weight:700;letter-spacing:0.02em;text-align:center;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);box-shadow:inset 0 5px 7px -3px rgba(0,0,0,0.55),inset 0 -4px 6px -3px rgba(0,0,0,0.28),inset 0 -1px 0 rgba(255,255,255,0.55),inset 5px 0 6px -5px rgba(0,0,0,0.5),inset -5px 0 6px -5px rgba(0,0,0,0.5);pointer-events:none;}
 @media (orientation: portrait){
 #nav-hud{right:12px;left:auto;bottom:calc(var(--safe-bot) + 60px);flex-direction:column;border-radius:10px;min-width:76px;}
 .hud-cell{flex:none;padding:6px 10px;border-right:none;border-bottom:1px solid rgba(0,200,255,0.12);min-width:68px;width:68px;}
@@ -352,7 +353,7 @@ body.nav-mode #zoom-ctrl{display:flex;}
 @media (orientation: landscape){
 /* ★v12(横画面レイアウト): 上段は縦画面と同じ「戻る◀ → 5ボタン → マイク」の横一列。
    高さは縦画面と同じ32px、横幅だけ縦画面より少し広く(最大96px)し、空の上側に均等配置。 */
-#nav-top-bar{flex-direction:row;top:calc(var(--safe-top) + 10px);left:62px;right:60px;width:auto;gap:8px;align-items:center;justify-content:space-between;pointer-events:none;}
+#nav-top-bar{flex-direction:row;top:calc(var(--safe-top) + 4px);left:62px;right:60px;width:auto;gap:8px;align-items:center;justify-content:space-between;pointer-events:none;}
 .top-bar-btn{flex:1 1 0;width:auto;max-width:96px;height:32px;font-size:11px;letter-spacing:0.04em;border-radius:9px;background:rgba(255,255,255,0.45);border:1px solid rgba(255,255,255,0.7);color:#000;}
 #dest-chg-top-btn{font-size:10px;}
 /* ★v12: 左側の縦一列(20m/広域/詳細/案内停止/一時停止/案内開始)は
@@ -361,13 +362,13 @@ body.nav-mode #zoom-ctrl{display:flex;}
 #nav-bottom-bar{flex-direction:column;bottom:calc(var(--safe-bot) + 8px);left:8px;right:auto;top:auto;width:80px;gap:6px;height:auto;}
 .nbb-btn{flex:none;width:100%;height:44px;padding:4px 3px;font-size:14px;letter-spacing:0.02em;line-height:1.25;border-radius:8px;} /* ★v37: 横画面のみ文字を大きく */
 .nbb-btn br{line-height:0.9;}
-.nav-back-btn{top:calc(var(--safe-top) + 10px);left:14px;}
+.nav-back-btn{top:calc(var(--safe-top) + 4px);left:14px;} /* ★v37c: 1.5mm上へ */
 .nav-instr-box{bottom:calc(var(--safe-bot) + 16px);left:50%;transform:translateX(-50%);top:auto;right:auto;width:auto;max-width:min(60vw,400px);padding:5px 14px;border-radius:8px;justify-content:center;background:rgba(3,10,22,0.88);border:1px solid rgba(0,200,255,0.3);}
 .nav-instr-main{font-size:11px;letter-spacing:0.02em;text-align:center;}
 .nav-arrow{font-size:12px;min-width:14px;color:#fff;}
 #zoom-ctrl{left:8px;bottom:calc(var(--safe-bot) + 172px);flex-direction:column;gap:0;width:80px;}
 .zoom-ctrl-btn{width:100%;height:44px;font-size:14px;letter-spacing:0.02em;border-radius:0;} /* ★v37 */
-#scale-display{width:auto !important;height:44px;margin:4px 6px;font-size:15px;letter-spacing:0;border-radius:6px;} /* ★v37 */
+#scale-display{width:auto !important;height:52px;margin:0;font-size:16px;letter-spacing:0;border-radius:0;border-left-width:6px;border-right-width:6px;} /* ★v37c: 窓を少し大きく */
 #nav-hud{right:8px;left:auto;bottom:calc(var(--safe-bot) + 8px);flex-direction:column;border-radius:10px;min-width:80px;}
 .hud-cell{padding:5px 10px;border-right:none;border-bottom:1px solid rgba(0,200,255,0.12);min-width:72px;width:72px;}
 .hud-cell:last-child{border-bottom:none;}
@@ -381,7 +382,7 @@ body.nav-mode #zoom-ctrl{display:flex;}
 #location-notice{bottom:calc(var(--safe-bot) + 8px + 88px + 8px + 44px + 8px);left:100px;right:100px;font-size:11px;padding:7px 12px;}
 #orient-badge{top:calc(var(--safe-top) + 50px);}
 #ai-bubble{bottom:calc(var(--safe-bot) + 16px + 44px + 8px);left:50%;transform:translateX(-50%);}
-#nav-mic-btn{top:calc(var(--safe-top) + 10px);right:12px;}
+#nav-mic-btn{top:calc(var(--safe-top) + 4px);right:12px;} /* ★v37c: 1.5mm上へ */
 }
 #walk-row{display:flex;gap:9px;align-items:stretch;margin-top:9px;}
 #walk-btn{width:64px;flex-shrink:0;background:rgba(255,255,255,0.055);border:1px solid rgba(0,200,255,0.3);border-radius:14px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;cursor:pointer;touch-action:manipulation;box-shadow:0 0 18px rgba(0,150,255,0.12),inset 0 1px 0 rgba(255,255,255,0.04);transition:all 0.2s;}
@@ -2550,7 +2551,7 @@ function addPhonebookEntry(){
   if(!name) return;
   var tel = prompt('電話番号を入力してください（例: 090-1234-5678）');
   if(!tel) return;
-  var yomi = prompt('読み・呼び方（任意・カンマ区切りで複数可）\n例: 典子 →  のりこ,ノリコ,リコ\n聞き取りにくい名前ほど登録推奨。空欄でも可。', '') || '';
+  var yomi = prompt('読み・呼び方（任意・カンマ区切りで複数可）\n読み方をカタカナで入力してください。\n聞き取りにくい名前ほど登録推奨。空欄でも可。', '') || '';
   var pb = getPhonebook();
   pb.push({name: name.trim(), tel: tel.trim(), yomi: yomi.trim()});
   savePhonebook(pb);
@@ -2563,7 +2564,7 @@ function editPhonebookEntry(i){
   if(!name) return;
   var tel = prompt('電話番号', pb[i].tel);
   if(!tel) return;
-  var yomi = prompt('読み・呼び方（任意・カンマ区切りで複数可）\n例: のりこ,ノリコ,リコ', pb[i].yomi || '') || '';
+  var yomi = prompt('読み・呼び方（任意・カンマ区切りで複数可）\n読み方をカタカナで入力してください。', pb[i].yomi || '') || '';
   pb[i] = {name: name.trim(), tel: tel.trim(), yomi: yomi.trim()};
   savePhonebook(pb);
   renderPhonebook();
@@ -5680,10 +5681,10 @@ function renderYomiFix(){
   }).join('');
 }
 function addYomiFixEntry(){
-  var key=prompt('誤読される表記（そのまま案内文に出てくる文字）\n例: 船尾東','');
+  var key=prompt('誤読される表記（そのまま案内文に出てくる文字）\n交差点名などをそのまま入力してください。','');
   if(!key)return;
   key=key.trim(); if(!key)return;
-  var val=prompt('正しい読み（カタカナ）\n例: フノウヒガシ', _yomiFix[key]||'');
+  var val=prompt('正しい読み\n読み方をカタカナで入力してください。', _yomiFix[key]||'');
   if(!val)return;
   val=val.trim(); if(!val)return;
   _yomiFix[key]=val;
@@ -5693,7 +5694,7 @@ function addYomiFixEntry(){
 }
 function editYomiFixEntry(key){
   if(!key||!_yomiFix[key])return;
-  var val=prompt('「'+key+'」の正しい読み（カタカナ）', _yomiFix[key]);
+  var val=prompt('「'+key+'」の正しい読み\n読み方をカタカナで入力してください。', _yomiFix[key]);
   if(val===null)return;
   val=val.trim();
   if(!val){ delete _yomiFix[key]; } else { _yomiFix[key]=val; }
