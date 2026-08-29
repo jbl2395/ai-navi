@@ -395,6 +395,27 @@ body.nav-mode #zoom-ctrl{display:flex;}
 #walk-btn.on #walk-btn-icon{color:#eafff6;}
 #walk-marker{position:fixed;left:50%;top:calc(50% + 95px);transform:translate(-50%,-50%);z-index:641;pointer-events:none;display:none;filter:drop-shadow(0 2px 6px rgba(0,0,0,0.8)) drop-shadow(0 0 12px rgba(0,200,255,0.45));}
 body.walk-mode #car-marker{display:none !important;}
+
+/* ============================================================
+   ★v38(純追加): 交差点看板（青地＋白矢印＋交差点名）
+   幅=🏠ボタン左端〜🚗ボタン右端（+左右位置オフセット）
+   上下中央=画面上端とHUD上端の中間。位置は実行時に実測して置く。
+   ============================================================ */
+#x-sign{position:fixed;display:none;align-items:stretch;overflow:hidden;height:118px;
+  background:linear-gradient(180deg,#1a7ada 0%,#0a55ab 100%);border-radius:8px;
+  box-shadow:0 4px 14px rgba(0,0,0,0.45);transform:translate(-50%,-50%);
+  z-index:646;pointer-events:none;}
+#x-sign.show{display:flex;}
+body:not(.nav-mode) #x-sign{display:none !important;}
+#x-arrow{flex:0 0 118px;width:118px;display:flex;align-items:center;justify-content:center;}
+#x-arrow svg{width:118px;height:118px;display:block;}
+#x-name{flex:1 1 auto;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 8px;color:#fff;text-align:center;}
+#x-name .xs-jp{font-weight:800;line-height:1.05;letter-spacing:0.01em;white-space:nowrap;}
+#x-name .xs-sub{font-size:11px;opacity:0.85;margin-top:4px;letter-spacing:0.06em;white-space:nowrap;}
+/* 設定パネルのスライダー（既存の音量/偏角スライダーと同一の意匠） */
+#xs-blen-slider,#xs-offx-slider,#xs-show-slider{width:100%;-webkit-appearance:none;appearance:none;height:6px;background:rgba(255,255,255,0.1);border-radius:3px;outline:none;touch-action:none;}
+#xs-blen-slider::-webkit-slider-thumb,#xs-offx-slider::-webkit-slider-thumb,#xs-show-slider::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:18px;height:18px;border-radius:50%;background:rgba(0,200,255,0.9);border:2px solid rgba(255,255,255,0.3);cursor:pointer;}
+#xs-blen-slider::-moz-range-thumb,#xs-offx-slider::-moz-range-thumb,#xs-show-slider::-moz-range-thumb{width:18px;height:18px;border-radius:50%;background:rgba(0,200,255,0.9);border:2px solid rgba(255,255,255,0.3);cursor:pointer;}
 </style>
 </head>
 <body>
@@ -579,6 +600,33 @@ body.walk-mode #car-marker{display:none !important;}
     </div>
   </div>
   <div class="sett-sec">
+    <div class="sett-sec-ttl">🪧 交差点看板</div>
+    <div class="sett-row">
+      <div class="sett-lbl">
+        <div class="sett-lbl-main">交差点看板を表示</div>
+        <div class="sett-lbl-sub">曲がる手前で青地の矢印＋交差点名を出す</div>
+      </div>
+      <div class="tog on" id="tog-xsign" onclick="toggleXSign()"></div>
+    </div>
+    <div class="sett-row" style="flex-direction:column;align-items:flex-start;">
+      <div class="sett-lbl-main" style="margin-bottom:6px;">矢印の長さ</div>
+      <input type="range" id="xs-blen-slider" min="30" max="100" step="1" value="70" oninput="setXSBlen(this.value)">
+      <div id="xs-blen-val" style="font-size:11px;color:rgba(0,200,255,0.7);margin-top:4px;">70</div>
+    </div>
+    <div class="sett-row" style="flex-direction:column;align-items:flex-start;">
+      <div class="sett-lbl-main" style="margin-bottom:6px;">看板の左右位置</div>
+      <div class="sett-lbl-sub" style="margin-bottom:8px;">0＝🏠〜🚗の真下／＋でマイク側へ</div>
+      <input type="range" id="xs-offx-slider" min="-40" max="90" step="1" value="48" oninput="setXSOffx(this.value)">
+      <div id="xs-offx-val" style="font-size:11px;color:rgba(0,200,255,0.7);margin-top:4px;">+48px</div>
+    </div>
+    <div class="sett-row" style="flex-direction:column;align-items:flex-start;">
+      <div class="sett-lbl-main" style="margin-bottom:6px;">表示を始める距離</div>
+      <div class="sett-lbl-sub" style="margin-bottom:8px;">この距離まで近づいたら看板を出し、曲がり切るまで出したままにする</div>
+      <input type="range" id="xs-show-slider" min="60" max="400" step="10" value="110" oninput="setXSShow(this.value)">
+      <div id="xs-show-val" style="font-size:11px;color:rgba(0,200,255,0.7);margin-top:4px;">110m</div>
+    </div>
+  </div>
+  <div class="sett-sec">
     <div class="sett-sec-ttl">🎨 表示設定</div>
     <div class="sett-row">
       <div class="sett-lbl">
@@ -754,6 +802,9 @@ body.walk-mode #car-marker{display:none !important;}
   </div>
 
   <div id="ai-bubble"></div>
+
+  <!-- ★v38(純追加): 交差点看板 -->
+  <div id="x-sign"><div id="x-arrow"></div><div id="x-name"></div></div>
 
   <div id="car-marker">
     <svg viewBox="-62 -60 186 124" width="93" height="62" xmlns="http://www.w3.org/2000/svg">
@@ -7964,6 +8015,8 @@ function startGpsTracking(map,destGeo,fromStepIdx){
         var aheadTurnName=lookAheadStep?getTurnName(lookAheadStep):'';
         var aheadIsTurn=(aheadTurnDir==='右折'||aheadTurnDir==='左折'||aheadTurnDir==='Uターン');
         var aheadIsFork=lookAheadStep?isFork(lookAheadStep):false;
+        // ★v38(純追加): 交差点看板の更新（表示/非表示の判断は _xsTick に集約）
+        try{_xsTick(distToNext,lookAheadStep,aheadIsTurn,aheadIsFork);}catch(_xst){}
         // ★v36(4): 「〇〇キロ以上道なりです」は残り距離で判定する（_straightSayTick へ集約）
         _straightSayTick(cur,false);
         // ★ 案内発話（700m/300m/まもなく/直前）— 例外が出ても後段の moveCamera(地図追従)を止めない
@@ -8450,6 +8503,8 @@ function startGpsTracking(map,destGeo,fromStepIdx){
         STATE._stepDistTrack[phaseKey]=_trk;
         if(_doAdvance){
           STATE.stepIdx++;
+          // ★v38: 交差点を通過した直後も、曲がり切るまでは看板を出したままにする
+          try{if(_XS.shown)_XS.holdUntil=Math.max(_XS.holdUntil,Date.now()+_xsCfg().holdMs);}catch(_xsa){}
           // ★v34(②): 曲がりを通過できた＝リルート不要だったので吸着を戻す
           if(SNAPOFF_RESTORE_ON_STEP&&STATE._snapHold&&STATE.stepIdx>(STATE._snapHoldStep||0))_snapHoldOff('step');
           if(STATE._drCatchTo!=null&&STATE.stepIdx>=STATE._drCatchTo)STATE._drCatchTo=null; // ★v6: 追いつき完了
@@ -8706,7 +8761,9 @@ function speakTTS(text,onDone){
   if(text===_lastSpokenText&&(now-_lastSpokenTime)<SPEAK_DEBOUNCE_MS){if(typeof onDone==='function')onDone();return;}
   _lastSpokenText=text;
   _lastSpokenTime=now;
-  showAiBubble(text);
+  // ★v38: 案内中は発話テキストの吹き出しを出さない（交差点看板に置き換え）。
+  //   Gemini応答など showAiBubble を直接呼んでいる箇所は従来どおり表示される。
+  if(!STATE.navActive)showAiBubble(text);
   speakTTSOnly(text,onDone);
 }
 
@@ -8763,6 +8820,7 @@ function setNavInfo(dest,addr,isLive,geoData){
 function setNavInstruction(arrow,main,sub){document.getElementById('nav-arrow').textContent=arrow;document.getElementById('nav-instruction').textContent=main;document.getElementById('nav-next-dist').textContent=sub||'';}
 
 function exitNav(){
+  try{_xsHide();}catch(_xsx){} // ★v38: 交差点看板を消す
   try{_navClearTrip();}catch(_ecl){} // ★v19(B): 正常終了/到着では復帰候補を残さない
   if(STATE.posTimer){clearInterval(STATE.posTimer);STATE.posTimer=null;}
   if(STATE.speedTimer){clearInterval(STATE.speedTimer);STATE.speedTimer=null;}
@@ -8888,6 +8946,7 @@ function initSettPanel(){
   var vs=document.getElementById('volume-slider');if(vs){vs.value=vol;document.getElementById('volume-val').textContent=vol+'%';}
   var decl=s.declination!==undefined?s.declination:0;
   var ds=document.getElementById('declination-slider');if(ds){ds.value=decl;document.getElementById('declination-val').textContent=(decl>=0?'+':'')+decl+'°';}
+  try{renderXSign();}catch(_xsr){} // ★v38: 交差点看板の設定を反映
   renderProbeTune(); // ★v20: リルート調整の現在値を表示
   renderPlaces();
   renderPhonebook(); // ★電話帳描画
@@ -9623,6 +9682,204 @@ WALK.stop=function(){
   else document.addEventListener('DOMContentLoaded',boot);
 })();
 
+
+// ============================================================
+// ★v38(純追加): 交差点看板（青地＋白矢印＋交差点名）
+//   ・角度は _computeGeomTurns が算出済みの step._geomAngle（ノード前後26mの実測方位差）
+//   ・「表示を始める距離」まで近づいた時点で角度を1回だけ確定し、通過するまで描き直さない
+//     （毎fix引き直すとGPSの数度のブレで矢印がチラつくため）
+//   ・矢印はSVGを角度から生成（画像ファイルなし）。外接矩形の中心を枠の中心へ合わせて
+//     どの角度でも上下左右のバランスを保つ
+//   ・位置は 🏠/🚗 ボタンとHUDの実測値から毎回計算（縦横どちらでも同じ規則）
+// ============================================================
+var XS_DEF={on:true,blen:70,offx:48,showM:110,hideM:150,holdMs:3500,straightDeg:12,singleDeg:70,minDrawDeg:20};
+function _xsCfg(){
+  var c={};try{c=(loadSt().xsign)||{};}catch(e){c={};}
+  var o={};for(var k in XS_DEF){o[k]=(c[k]!==undefined&&c[k]!==null)?c[k]:XS_DEF[k];}
+  return o;
+}
+function _xsSaveCfg(patch){
+  var c={};try{c=(loadSt().xsign)||{};}catch(e){c={};}
+  for(var k in patch)c[k]=patch[k];
+  try{saveSt({xsign:c});}catch(e){}
+}
+var _XS={shown:false,key:'',deg:null,name:'',holdUntil:0,at:0};
+
+// 角度から矢印SVGを生成（0=直進 / 正=右 / 負=左）
+function _xsArrowSvg(deg,C){
+  var W=100,SW=14,HEAD_L=20,HEAD_H=14,HW=SW/2,LAP=6;
+  var a=Math.abs(deg);
+  var mode=(a<C.straightDeg)?'straight':((a>=C.singleDeg)?'single':'branch');
+  var draw=deg;
+  if(mode==='branch'&&a<C.minDrawDeg)draw=(deg<0?-C.minDrawDeg:C.minDrawDeg); // 浅すぎる枝は読めないので描画だけ開く
+  var r=draw*Math.PI/180,dx=Math.sin(r),dy=-Math.cos(r);
+  var parts=[],xs=[],ys=[];
+  function nx(){for(var i=0;i<arguments.length;i++)xs.push(arguments[i]);}
+  function ny(){for(var i=0;i<arguments.length;i++)ys.push(arguments[i]);}
+  function head(tx,ty,ux,uy){
+    var bx=tx-HEAD_L*ux,by=ty-HEAD_L*uy,px=-uy,py=ux;
+    var ax=bx+px*HEAD_H,ay=by+py*HEAD_H,cx=bx-px*HEAD_H,cy=by-py*HEAD_H;
+    nx(tx,ax,cx);ny(ty,ay,cy);
+    return '<polygon points="'+tx.toFixed(1)+','+ty.toFixed(1)+' '+ax.toFixed(1)+','+ay.toFixed(1)+' '+cx.toFixed(1)+','+cy.toFixed(1)+'" fill="#fff"/>';
+  }
+  function fit(req,jy){ // 枠(2〜98)からはみ出さないよう長さを頭打ち
+    var m=req;
+    if(dx>0.001)m=Math.min(m,(98-50)/dx);
+    if(dx<-0.001)m=Math.min(m,(2-50)/dx);
+    if(dy>0.001)m=Math.min(m,(98-jy)/dy);
+    if(dy<-0.001)m=Math.min(m,(2-jy)/dy);
+    return Math.max(24,m);
+  }
+  if(mode==='straight'){
+    parts.push('<path d="M50,98 L50,'+(24-LAP)+'" stroke="#fff" stroke-width="'+SW+'" fill="none" stroke-linecap="butt"/>');
+    nx(50-HW,50+HW);ny(98);
+    parts.push(head(50,4,0,-1));
+  }else if(mode==='single'){
+    var J=56,L=fit(C.blen,J);
+    var ex=50+(L-HEAD_L+LAP)*dx,ey=J+(L-HEAD_L+LAP)*dy,tx=50+L*dx,ty=J+L*dy;
+    parts.push('<path d="M50,98 L50,'+J+' L'+ex.toFixed(1)+','+ey.toFixed(1)+'" stroke="#fff" stroke-width="'+SW+'" fill="none" stroke-linejoin="round" stroke-linecap="butt"/>');
+    nx(50-HW,50+HW,ex-HW,ex+HW);ny(98,J-HW,J+HW,ey-HW,ey+HW);
+    parts.push(head(tx,ty,dx,dy));
+  }else{
+    // 直進の棒（矢尻なし）＋実角度の枝（矢尻あり）。
+    // 枝は棒の根元から描いて完全に重ねる（接するだけだと境目に細い線が出るため）。
+    var BJ=68,BL=fit(C.blen,BJ);
+    parts.push('<path d="M50,98 L50,6" stroke="#fff" stroke-width="'+SW+'" fill="none" stroke-linecap="butt"/>');
+    var bex=50+(BL-HEAD_L+LAP)*dx,bey=BJ+(BL-HEAD_L+LAP)*dy,btx=50+BL*dx,bty=BJ+BL*dy;
+    parts.push('<path d="M50,98 L50,'+BJ+' L'+bex.toFixed(1)+','+bey.toFixed(1)+'" stroke="#fff" stroke-width="'+SW+'" fill="none" stroke-linejoin="round" stroke-linecap="butt"/>');
+    nx(50-HW,50+HW,bex-HW,bex+HW);ny(98,6,bey-HW,bey+HW);
+    parts.push(head(btx,bty,dx,dy));
+  }
+  var minX=Math.min.apply(null,xs),maxX=Math.max.apply(null,xs);
+  var sx=50-(minX+maxX)/2;
+  if(minX+sx<1)sx=1-minX; if(maxX+sx>99)sx=99-maxX;
+  var minY=Math.min.apply(null,ys),maxY=Math.max.apply(null,ys);
+  var sy=50-(minY+maxY)/2;
+  if(minY+sy<1)sy=1-minY; if(maxY+sy>99)sy=99-maxY;
+  return '<svg viewBox="0 0 '+W+' '+W+'" shape-rendering="geometricPrecision" xmlns="http://www.w3.org/2000/svg">'+
+         '<g transform="translate('+sx.toFixed(1)+','+sy.toFixed(1)+')">'+parts.join('')+'</g></svg>';
+}
+
+function _xsPlace(){
+  var el=document.getElementById('x-sign');if(!el)return;
+  var C=_xsCfg();
+  var vw=window.innerWidth||360,vh=window.innerHeight||640;
+  var l,r;
+  var h=document.getElementById('home-nav-btn'),p=document.getElementById('parking-btn');
+  var rh=h?h.getBoundingClientRect():null,rp=p?p.getBoundingClientRect():null;
+  if(rh&&rp&&rh.width>1&&rp.width>1){l=Math.min(rh.left,rp.left);r=Math.max(rh.right,rp.right);}
+  else{l=vw*0.42;r=vw-60;}
+  l+=C.offx;r+=C.offx;
+  var w=Math.max(170,Math.min(vw-16,r-l));
+  var hud=document.getElementById('nav-hud');
+  var rhu=hud?hud.getBoundingClientRect():null;
+  var top=(rhu&&rhu.height>1)?rhu.top:(vh*0.7);
+  var cy=Math.max(70,top/2);
+  var cx=Math.max(w/2+6,Math.min(vw-w/2-6,l+w/2));
+  el.style.width=w+'px';el.style.left=cx+'px';el.style.top=cy+'px';
+}
+
+function _xsNameOf(step){
+  var n='';
+  try{n=_kanjiCrossName(step)||'';}catch(e){n='';}
+  n=String(n).replace(/[<>]/g,'').replace(/\s+/g,'');
+  if(n.length>10)n=n.slice(0,10);
+  return n;
+}
+// maneuver しか手掛かりが無い場合の保険（_geomAngle が取れない交差点用）
+var XS_MNV={'turn-sharp-left':-135,'turn-left':-90,'turn-slight-left':-35,'straight':0,
+            'turn-slight-right':35,'turn-right':90,'turn-sharp-right':135,
+            'uturn-left':-175,'uturn-right':175,'fork-left':-25,'fork-right':25,
+            'ramp-left':-35,'ramp-right':35};
+function _xsAngleOf(step){
+  if(!step)return null;
+  if(typeof step._geomAngle==='number'&&!isNaN(step._geomAngle))return step._geomAngle;
+  var m=step.maneuver||'';
+  if(XS_MNV[m]!==undefined)return XS_MNV[m];
+  return null;
+}
+function _xsUpdate(deg,name){
+  var el=document.getElementById('x-sign');if(!el)return;
+  var C=_xsCfg();
+  var ar=document.getElementById('x-arrow'),nm=document.getElementById('x-name');
+  if(ar)ar.innerHTML=_xsArrowSvg(deg,C);
+  if(nm){
+    if(name){
+      var L=name.length,fs=(L<=3)?38:((L===4)?33:((L===5)?27:((L===6)?23:19)));
+      nm.innerHTML='<div class="xs-jp" style="font-size:'+fs+'px">'+name+'</div><div class="xs-sub">交差点</div>';
+    }else nm.innerHTML='';
+  }
+  _xsPlace();
+  el.classList.add('show');
+  _XS.shown=true;_XS.at=Date.now();
+}
+function _xsHide(){
+  var el=document.getElementById('x-sign');if(el)el.classList.remove('show');
+  _XS.shown=false;_XS.key='';_XS.deg=null;_XS.holdUntil=0;
+}
+// 案内ループから毎fix呼ぶ。d=次の交差点までの距離、step=その交差点のステップ(stepIdx+1)
+function _xsTick(d,step,isTurn,isFork){
+  try{
+    var C=_xsCfg();
+    if(!C.on){if(_XS.shown)_xsHide();return;}
+    var now=Date.now(),key=(STATE._routeGen||0)+':'+STATE.stepIdx;
+    if(_XS.shown&&_XS.key===key){                 // いま出している交差点
+      _XS.at=now;
+      if(d<=30)_XS.holdUntil=now+C.holdMs;        // 曲がり切るまでの保持を予約
+      if(d>C.hideM&&now>=_XS.holdUntil)_xsHide();
+      return;
+    }
+    if(_XS.shown&&now<_XS.holdUntil){_XS.at=now;return;} // 通過直後は次の看板に切り替えない
+    if(_XS.shown)_xsHide();
+    if(!step)return;
+    var mnv=step.maneuver||'';
+    if(!(isTurn||isFork))return;
+    if(/roundabout|merge|ferry/.test(mnv))return;
+    if(!(d<=C.showM))return;
+    var deg=_xsAngleOf(step);if(deg===null)return;
+    _XS.key=key;_XS.deg=deg;_XS.name=_xsNameOf(step);
+    _xsUpdate(deg,_XS.name);
+    try{_navLog('xsign',{step:STATE.stepIdx,deg:Math.round(deg),d:Math.round(d),nm:_XS.name});}catch(_xe){}
+  }catch(e){}
+}
+// 保険: リルート/DR等で案内ループが止まった時に看板が残らないようにする
+setInterval(function(){
+  try{
+    if(!_XS.shown)return;
+    var now=Date.now();
+    if(now-_XS.at>6000&&now>=_XS.holdUntil)_xsHide();
+  }catch(e){}
+},1000);
+window.addEventListener('resize',function(){try{if(_XS.shown)_xsPlace();}catch(e){}});
+window.addEventListener('orientationchange',function(){try{setTimeout(function(){if(_XS.shown)_xsPlace();},350);}catch(e){}});
+
+// ---- 設定パネル ----
+function renderXSign(){
+  var C=_xsCfg();
+  var t=document.getElementById('tog-xsign');if(t)t.classList.toggle('on',!!C.on);
+  var b=document.getElementById('xs-blen-slider');if(b){b.value=C.blen;var bv=document.getElementById('xs-blen-val');if(bv)bv.textContent=C.blen;}
+  var o=document.getElementById('xs-offx-slider');if(o){o.value=C.offx;var ov=document.getElementById('xs-offx-val');if(ov)ov.textContent=(C.offx>=0?'+':'')+C.offx+'px';}
+  var m=document.getElementById('xs-show-slider');if(m){m.value=C.showM;var mv=document.getElementById('xs-show-val');if(mv)mv.textContent=C.showM+'m';}
+}
+function toggleXSign(){
+  var C=_xsCfg();var v=!C.on;_xsSaveCfg({on:v});
+  var t=document.getElementById('tog-xsign');if(t)t.classList.toggle('on',v);
+  if(!v)_xsHide();
+}
+function setXSBlen(v){
+  var n=parseInt(v,10);_xsSaveCfg({blen:n});
+  var el=document.getElementById('xs-blen-val');if(el)el.textContent=n;
+  try{if(_XS.shown&&_XS.deg!==null)_xsUpdate(_XS.deg,_XS.name);}catch(e){}
+}
+function setXSOffx(v){
+  var n=parseInt(v,10);_xsSaveCfg({offx:n});
+  var el=document.getElementById('xs-offx-val');if(el)el.textContent=(n>=0?'+':'')+n+'px';
+  try{if(_XS.shown)_xsPlace();}catch(e){}
+}
+function setXSShow(v){
+  var n=parseInt(v,10);_xsSaveCfg({showM:n,hideM:Math.max(150,Math.round(n*1.35))});
+  var el=document.getElementById('xs-show-val');if(el)el.textContent=n+'m';
+}
 </script>
 </body>
 </html>
