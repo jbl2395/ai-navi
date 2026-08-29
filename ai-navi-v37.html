@@ -277,13 +277,21 @@ body.nav-mode #nav-hud{display:flex;}
 #hud-speed .hud-val{font-size:22px;color:#000;}
 #hud-dist  .hud-val{font-size:18px;color:#000;}
 #hud-eta   .hud-val{font-size:18px;color:#000;}
-#zoom-ctrl{position:fixed;bottom:calc(var(--safe-bot) + 60px);left:12px;display:none;flex-direction:column;gap:5px;z-index:616;pointer-events:all;justify-content:flex-end;}
+/* ★v37b: 広域／〇〇m／詳細 を1枚のタイルに統合。
+   立体感はタイル外周（広域〜詳細の周囲）のみに付け、
+   〇〇m は左右に本体色の縁を残した「窓」＝すりガラスの平面とする。 */
+#zoom-ctrl{position:fixed;bottom:calc(var(--safe-bot) + 74px);left:12px;display:none;flex-direction:column;gap:0;z-index:616;pointer-events:all;justify-content:flex-end;
+  width:52px;background:linear-gradient(180deg,rgba(16,24,36,0.82),rgba(0,4,10,0.70));
+  border:1px solid rgba(255,255,255,0.26);border-radius:10px;
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,0.30),inset 0 -2px 5px rgba(0,0,0,0.32),0 4px 10px rgba(0,0,0,0.36);
+  overflow:hidden;}
 body.nav-mode #zoom-ctrl{display:flex;}
-/* ★v37: 広域・詳細は黒めの半透明＋立体感、文字は白 */
-.zoom-ctrl-btn{width:52px;height:36px;background:linear-gradient(180deg,rgba(16,24,36,0.80),rgba(0,4,10,0.68));border:1px solid rgba(255,255,255,0.26);border-radius:9px;color:#fff;font-size:11px;font-family:'Orbitron',sans-serif;font-weight:700;letter-spacing:0.04em;cursor:pointer;touch-action:manipulation;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);transition:all 0.15s;text-shadow:0 1px 2px rgba(0,0,0,0.7);box-shadow:inset 0 1px 0 rgba(255,255,255,0.28),inset 0 -2px 4px rgba(0,0,0,0.30),0 3px 8px rgba(0,0,0,0.32);}
-.zoom-ctrl-btn:active{transform:translateY(1px) scale(0.95);background:linear-gradient(180deg,rgba(0,150,200,0.55),rgba(0,90,140,0.45));box-shadow:inset 0 2px 5px rgba(0,0,0,0.35),0 1px 3px rgba(0,0,0,0.25);}
-/* ★v37: 〇〇m 窓は上部バーと同じすりガラス、文字は黒。広域と詳細の間に配置 */
-#scale-display{width:52px;height:36px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.45);border:1px solid rgba(255,255,255,0.7);border-radius:9px;color:#000;font-size:10px;font-family:'Orbitron',sans-serif;font-weight:700;letter-spacing:0.02em;text-align:center;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);box-shadow:inset 0 1px 0 rgba(255,255,255,0.85),inset 0 -1px 0 rgba(0,0,0,0.06),0 3px 8px rgba(0,0,0,0.22);pointer-events:none;}
+/* 広域・詳細：タイルの一部なので単体の枠・影は持たせない。文字は白 */
+.zoom-ctrl-btn{width:100%;height:36px;background:transparent;border:0;border-radius:0;color:#fff;font-size:11px;font-family:'Orbitron',sans-serif;font-weight:700;letter-spacing:0.04em;cursor:pointer;touch-action:manipulation;transition:background 0.15s;text-shadow:0 1px 2px rgba(0,0,0,0.7);padding:0;}
+.zoom-ctrl-btn:active{background:rgba(0,190,255,0.28);}
+/* 〇〇m 窓：平面のすりガラス。左右のマージンでタイル本体色が縁として残る */
+#scale-display{height:36px;margin:3px 5px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.45);border:1px solid rgba(255,255,255,0.62);border-radius:6px;color:#000;font-size:10px;font-family:'Orbitron',sans-serif;font-weight:700;letter-spacing:0.02em;text-align:center;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);box-shadow:none;pointer-events:none;flex:none;}
 @media (orientation: portrait){
 #nav-hud{right:12px;left:auto;bottom:calc(var(--safe-bot) + 60px);flex-direction:column;border-radius:10px;min-width:76px;}
 .hud-cell{flex:none;padding:6px 10px;border-right:none;border-bottom:1px solid rgba(0,200,255,0.12);min-width:68px;width:68px;}
@@ -293,7 +301,7 @@ body.nav-mode #zoom-ctrl{display:flex;}
 #hud-dist  .hud-val{font-size:15px;color:#000;}
 #hud-eta   .hud-val{font-size:15px;color:#000;}
 .hud-lbl{font-size:8px;margin-top:2px;color:rgba(0,0,0,0.6);}
-#zoom-ctrl{bottom:calc(var(--safe-bot) + 60px);left:12px;}
+#zoom-ctrl{bottom:calc(var(--safe-bot) + 74px);left:12px;} /* ★v37b: 案内停止との間隔を確保 */
 #nav-bottom-bar{left:12px;right:12px;bottom:calc(var(--safe-bot) + 8px);}
 }
 .nav-speed-box{display:none;}
@@ -357,9 +365,9 @@ body.nav-mode #zoom-ctrl{display:flex;}
 .nav-instr-box{bottom:calc(var(--safe-bot) + 16px);left:50%;transform:translateX(-50%);top:auto;right:auto;width:auto;max-width:min(60vw,400px);padding:5px 14px;border-radius:8px;justify-content:center;background:rgba(3,10,22,0.88);border:1px solid rgba(0,200,255,0.3);}
 .nav-instr-main{font-size:11px;letter-spacing:0.02em;text-align:center;}
 .nav-arrow{font-size:12px;min-width:14px;color:#fff;}
-#zoom-ctrl{left:8px;bottom:calc(var(--safe-bot) + 158px);flex-direction:column;gap:6px;width:80px;}
-.zoom-ctrl-btn{width:100%;height:44px;font-size:14px;letter-spacing:0.02em;border-radius:8px;} /* ★v37 */
-#scale-display{width:100% !important;height:44px;font-size:15px;letter-spacing:0;border-radius:8px;} /* ★v37 */
+#zoom-ctrl{left:8px;bottom:calc(var(--safe-bot) + 172px);flex-direction:column;gap:0;width:80px;}
+.zoom-ctrl-btn{width:100%;height:44px;font-size:14px;letter-spacing:0.02em;border-radius:0;} /* ★v37 */
+#scale-display{width:auto !important;height:44px;margin:4px 6px;font-size:15px;letter-spacing:0;border-radius:6px;} /* ★v37 */
 #nav-hud{right:8px;left:auto;bottom:calc(var(--safe-bot) + 8px);flex-direction:column;border-radius:10px;min-width:80px;}
 .hud-cell{padding:5px 10px;border-right:none;border-bottom:1px solid rgba(0,200,255,0.12);min-width:72px;width:72px;}
 .hud-cell:last-child{border-bottom:none;}
