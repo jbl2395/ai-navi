@@ -401,7 +401,7 @@ body.walk-mode #car-marker{display:none !important;}
    幅=🏠ボタン左端〜🚗ボタン右端（+左右位置オフセット）
    上下中央=画面上端とHUD上端の中間。位置は実行時に実測して置く。
    ============================================================ */
-#x-sign{position:fixed;display:none;align-items:stretch;overflow:hidden;height:118px;
+#x-sign{position:fixed;display:none;align-items:stretch;overflow:hidden;height:118px;max-width:calc(100vw - 12px);box-sizing:border-box;
   background:linear-gradient(180deg,#1a7ada 0%,#0a55ab 100%);border-radius:8px;
   box-shadow:0 4px 14px rgba(0,0,0,0.45);transform:translate(-50%,-50%);
   z-index:646;pointer-events:none;}
@@ -409,7 +409,7 @@ body.walk-mode #car-marker{display:none !important;}
 body:not(.nav-mode) #x-sign{display:none !important;}
 #x-arrow{flex:0 0 118px;width:118px;display:flex;align-items:center;justify-content:center;}
 #x-arrow svg{width:118px;height:118px;display:block;}
-#x-name{flex:1 1 auto;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 8px;color:#fff;text-align:center;}
+#x-name{flex:1 1 auto;min-width:0;overflow:hidden;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 8px;color:#fff;text-align:center;}
 #x-name .xs-jp{font-weight:800;line-height:1.05;letter-spacing:0.01em;white-space:nowrap;}
 #x-name .xs-sub{font-size:11px;opacity:0.85;margin-top:4px;letter-spacing:0.06em;white-space:nowrap;}
 /* 設定パネルのスライダー（既存の音量/偏角スライダーと同一の意匠） */
@@ -9764,19 +9764,45 @@ function _xsPlace(){
   var el=document.getElementById('x-sign');if(!el)return;
   var C=_xsCfg();
   var vw=window.innerWidth||360,vh=window.innerHeight||640;
-  var l,r;
-  var h=document.getElementById('home-nav-btn'),p=document.getElementById('parking-btn');
-  var rh=h?h.getBoundingClientRect():null,rp=p?p.getBoundingClientRect():null;
-  if(rh&&rp&&rh.width>1&&rp.width>1){l=Math.min(rh.left,rp.left);r=Math.max(rh.right,rp.right);}
-  else{l=vw*0.42;r=vw-60;}
-  l+=C.offx;r+=C.offx;
-  var w=Math.max(170,Math.min(vw-16,r-l));
+  var isLand=(vw>vh);
+  var w,cx;
+  if(isLand){
+    // 横画面: 幅=🏠ボタン左端〜🚗ボタン右端（＋左右位置オフセット）
+    var l,r;
+    var h=document.getElementById('home-nav-btn'),p=document.getElementById('parking-btn');
+    var rh=h?h.getBoundingClientRect():null,rp=p?p.getBoundingClientRect():null;
+    if(rh&&rp&&rh.width>1&&rp.width>1){l=Math.min(rh.left,rp.left);r=Math.max(rh.right,rp.right);}
+    else{l=vw*0.42;r=vw-60;}
+    l+=C.offx;r+=C.offx;
+    w=Math.max(170,Math.min(vw-12,r-l));
+    cx=Math.max(w/2+6,Math.min(vw-w/2-6,l+w/2));
+  }else{
+    // ★v38b 縦画面: 横幅が足りないので画面中央に置き、幅も画面に合わせる
+    w=Math.min(vw-24,330);
+    cx=vw/2;
+  }
   var hud=document.getElementById('nav-hud');
   var rhu=hud?hud.getBoundingClientRect():null;
   var top=(rhu&&rhu.height>1)?rhu.top:(vh*0.7);
   var cy=Math.max(70,top/2);
-  var cx=Math.max(w/2+6,Math.min(vw-w/2-6,l+w/2));
   el.style.width=w+'px';el.style.left=cx+'px';el.style.top=cy+'px';
+  // 矢印は看板の幅に合わせて縮める（狭い画面で名前の場所が無くなるのを防ぐ）
+  var aw=Math.max(66,Math.min(118,Math.round(w*0.40)));
+  var ar=document.getElementById('x-arrow');
+  if(ar){ar.style.flex='0 0 '+aw+'px';ar.style.width=aw+'px';
+    var sv=ar.firstChild;if(sv&&sv.style){sv.style.width=aw+'px';sv.style.height=aw+'px';}}
+  el.style.height=Math.max(96,Math.min(118,aw))+'px';
+}
+
+// 交差点名が枠に収まるまでフォントを自動で詰める
+function _xsFitName(){
+  try{
+    var nm=document.getElementById('x-name');if(!nm)return;
+    var jp=nm.getElementsByClassName('xs-jp')[0];if(!jp)return;
+    var avail=nm.clientWidth-6;if(!(avail>10))return;
+    var fs=parseFloat(jp.style.fontSize)||24,g=0;
+    while(jp.scrollWidth>avail&&fs>11&&g<40){fs-=1.5;jp.style.fontSize=fs+'px';g++;}
+  }catch(e){}
 }
 
 function _xsNameOf(step){
@@ -9818,6 +9844,7 @@ function _xsUpdate(deg,name){
   }
   _xsPlace();
   el.classList.add('show');
+  _xsFitName(); // ★v38b: 名前が長い/画面が狭い時に文字がはみ出すのを防ぐ
   _XS.shown=true;_XS.at=Date.now();
 }
 function _xsHide(){
@@ -9857,8 +9884,8 @@ setInterval(function(){
     if(now-_XS.at>6000&&now>=_XS.holdUntil)_xsHide();
   }catch(e){}
 },1000);
-window.addEventListener('resize',function(){try{if(_XS.shown)_xsPlace();}catch(e){}});
-window.addEventListener('orientationchange',function(){try{setTimeout(function(){if(_XS.shown)_xsPlace();},350);}catch(e){}});
+window.addEventListener('resize',function(){try{if(_XS.shown&&_XS.deg!==null)_xsUpdate(_XS.deg,_XS.name);}catch(e){}});
+window.addEventListener('orientationchange',function(){try{setTimeout(function(){if(_XS.shown&&_XS.deg!==null)_xsUpdate(_XS.deg,_XS.name);},350);}catch(e){}});
 
 // ---- 設定パネル ----
 function renderXSign(){
