@@ -580,6 +580,13 @@ body:not(.nav-mode) #x-sign{display:none !important;}
   </div>
   <div class="sett-sec">
     <div class="sett-sec-ttl">🗺 ナビ設定</div>
+    <div class="sett-row">
+      <div class="sett-lbl">
+        <div class="sett-lbl-main">近距離は最短ルート優先</div>
+        <div class="sett-lbl-sub">5km以内は候補の中から総距離が最短の1本を選ぶ。OFFにするとGoogleの推奨ルートをそのまま使う</div>
+      </div>
+      <div class="tog on" id="tog-shortmode" onclick="toggleShortMode()"></div>
+    </div>
     <div class="sett-row" style="flex-direction:column;align-items:flex-start;">
       <div class="sett-lbl-main" style="margin-bottom:6px;">地図の向き</div>
       <div class="sett-lbl-sub" style="margin-bottom:8px;">進行方向固定：車の向きに合わせて地図が回転</div>
@@ -1130,6 +1137,21 @@ var FORWARD_MAX_ANGLE_DEG = 100;// 新ルート冒頭が進行方向±この角�
 //   travelMode は DRIVING のまま（WALKINGは一方通行・歩道・階段を通るため車では使わない）。
 //   リルート時は前向きゲート(_pickShortestForward)を通った候補の中から最短を選ぶ＝後戻りしない。
 var SHORT_MODE_RADIUS_M = 5000;
+// ★v39c(検証用スイッチ): 近距離最短モードそのもののON/OFF。
+//   既定 true ＝ 前版とまったく同じ動作。false にすると候補を要求せず、
+//   Googleの推奨ルート(routes[0])をそのまま使う＝最短優先の上書きをしない。
+//   「最短だが鋭角ターンで実質遠回り」になるケースの切り分け用。
+var SHORT_MODE_ENABLE_DEF = true;
+function shortModeEnabled(){
+  try{var v=loadSt().shortMode;return (v===undefined||v===null)?SHORT_MODE_ENABLE_DEF:!!v;}
+  catch(e){return SHORT_MODE_ENABLE_DEF;}
+}
+function toggleShortMode(){
+  var v=!shortModeEnabled();
+  try{saveSt({shortMode:v});}catch(e){}
+  var t=document.getElementById('tog-shortmode');if(t)t.classList.toggle('on',v);
+  try{_navLog('shortmode-set',{on:v});}catch(e){}
+}
 // ★③ 広い駐車場対策（最接近後に離れたら到着扱い）
 var PARK_ARRIVE_VICINITY_M = 300; // ★駐車場到着(独立パス): 目的地手前で最終ステップ到達前に逸脱した場合でも、直線この距離以内かつ道路スナップで道路外なら駐車場到着として扱う至近帯
 var NEARDEST_SNAP_GRACE_FIX = 3;  // ★近接帯統合: 道路スナップ未確定のまま近接リルートを保留する最大fix数。超えたら道路上とみなしリルート発火(スナップ遅延でリルートが不発になるのを防ぐ)
@@ -4763,18 +4785,36 @@ function scoreRouteCandidate(route,heading){
 // ★v8(近距離最短): 候補のうち「総距離が最小」のものを routes[0] に入れ替える。
 //   徒歩ルート(WALK._requestRoute)と同じ選び方。呼び出し側は従来どおり routes[0] を使えばよい。
 //   候補が1本しかない／取れない場合は何もしない＝従来動作。
+// ★v39c: 候補から1本を選ぶ処理は、選んだ結果だけでなく「候補全部」をログに残す。
+//   （8/30の実走で「通りたかった道が候補に無かったのか／候補にあって負けたのか」を
+//     ログから切り分けられなかったため。勝った1本の距離しか残していなかった。）
+function _rtBrief(route){            // 候補の見分けがつく最小限のダイジェスト
+  try{
+    var lg=(route&&route.legs)?route.legs:[],st=(lg[0]&&lg[0].steps)?lg[0].steps:[],o=[],i;
+    for(i=0;i<st.length&&i<3;i++){
+      var t=stripHtml(st[i].instructions||'').replace(/[\s　]+/g,'');
+      if(t.length>14)t=t.slice(0,14);
+      o.push(t);
+    }
+    return o.join('>');
+  }catch(e){return '';}
+}
 function _shortestFirst(result){
   try{
     var rs=(result&&result.routes)?result.routes:null;
     if(!rs||rs.length<2)return -1;
-    var best=0,bestD=Infinity,i,j,d,lg;
+    var best=0,bestD=Infinity,i,j,d,sec,lg,all=[];
     for(i=0;i<rs.length;i++){
-      d=0; lg=rs[i].legs||[];
-      for(j=0;j<lg.length;j++)d+=(lg[j].distance&&lg[j].distance.value)?lg[j].distance.value:0;
+      d=0; sec=0; lg=rs[i].legs||[];
+      for(j=0;j<lg.length;j++){
+        d+=(lg[j].distance&&lg[j].distance.value)?lg[j].distance.value:0;
+        sec+=(lg[j].duration&&lg[j].duration.value)?lg[j].duration.value:0;
+      }
+      all.push({i:i,m:Math.round(d),s:Math.round(sec),v:_rtBrief(rs[i])}); // ★v39c
       if(d<bestD){bestD=d;best=i;}
     }
     if(best>0){var t=rs[0];rs[0]=rs[best];rs[best]=t;}
-    _navLog('shortpick',{n:rs.length,idx:best,m:Math.round(bestD)});
+    _navLog('shortpick',{n:rs.length,idx:best,m:Math.round(bestD),all:all}); // ★v39c: 候補全部
     return best;
   }catch(e){return -1;}
 }
@@ -6376,7 +6416,7 @@ function calcRouteAndDisplay(map,origin,destGeo,destName){
   // ★v8(近距離最短): 目的地設定時のプレビューも同じ判定にする（案内開始後の線と食い違わないため）
   var _shortMode=false;
   try{
-    _shortMode=(google.maps.geometry.spherical.computeDistanceBetween(
+    _shortMode=shortModeEnabled()&&(google.maps.geometry.spherical.computeDistanceBetween( // ★v39c: スイッチOFFなら最短優先の上書きをしない
       new google.maps.LatLng(origin.lat,origin.lng),
       new google.maps.LatLng(destGeo.lat,destGeo.lng))<=SHORT_MODE_RADIUS_M);
   }catch(_sm){_shortMode=false;}
@@ -6755,7 +6795,7 @@ function calcRouteAndStartNav(map,origin,destGeo,destName){
   //   候補を複数もらい、総距離が最小の1本を routes[0] に据えてから従来処理へ流す。
   var _shortMode=false;
   try{
-    _shortMode=(google.maps.geometry.spherical.computeDistanceBetween(
+    _shortMode=shortModeEnabled()&&(google.maps.geometry.spherical.computeDistanceBetween( // ★v39c: スイッチOFFなら最短優先の上書きをしない
       new google.maps.LatLng(origin.lat,origin.lng),
       new google.maps.LatLng(destGeo.lat,destGeo.lng))<=SHORT_MODE_RADIUS_M);
   }catch(_sm){_shortMode=false;}
@@ -8982,6 +9022,7 @@ function initSettPanel(){
   var decl=s.declination!==undefined?s.declination:0;
   var ds=document.getElementById('declination-slider');if(ds){ds.value=decl;document.getElementById('declination-val').textContent=(decl>=0?'+':'')+decl+'°';}
   try{renderXSign();}catch(_xsr){} // ★v38: 交差点看板の設定を反映
+  try{var _tsm=document.getElementById('tog-shortmode');if(_tsm)_tsm.classList.toggle('on',shortModeEnabled());}catch(_smr){} // ★v39c: 近距離最短モードのトグルを反映
   renderProbeTune(); // ★v20: リルート調整の現在値を表示
   renderPlaces();
   renderPhonebook(); // ★電話帳描画
