@@ -9839,7 +9839,7 @@ function _xsSaveCfg(patch){
   for(var k in patch)c[k]=patch[k];
   try{saveSt({xsign:c});}catch(e){}
 }
-var _XS={shown:false,key:'',deg:null,name:'',holdUntil:0,at:0,opt:null,hideM:150,exitName:''};
+var _XS={shown:false,key:'',deg:null,name:'',holdUntil:0,at:0,opt:null,hideM:150,exitName:'',bandOn:'',bandOffAt:0,bandDone:''};
 
 // ============================================================
 // ★v39(純追加): 有料道路用の看板（緑）とＵターン警告（緑/赤）
@@ -9852,8 +9852,10 @@ var _XS={shown:false,key:'',deg:null,name:'',holdUntil:0,at:0,opt:null,hideM:150
 //   ・Ｕターン警告      … 赤。ルートは差し替えず警告表示のみ（_uwTick が判定）
 //   本モジュールは表示専用。採点/採用ゲート/発話フェーズには一切触れない。
 // ============================================================
-var XS_EXIT_SHOW_M = 2100;   // 出口看板を出し始める距離(m)
-var XS_EXIT_HIDE_M = 2500;   // 出口看板のヒステリシス（これを超えたら消す）
+// ★v39e: 出口看板は「500m〜まもなく」を連続表示にし、2km/1km は発話帯（発話中だけ）に回す
+var XS_EXIT_SHOW_M = 520;    // 出口看板を連続表示し始める距離(m)
+var XS_EXIT_HIDE_M = 620;    // 出口看板のヒステリシス（これを超えたら消す）
+var XS_BAND_TAIL_MS = 1500;  // 発話帯の看板を読み終わってから残す時間(ms)
 // 路線名の短縮（機械変換で足りないものだけ個別登録）
 var XS_ROAD_FIX={'近畿自動車道紀勢線':'紀勢道','近畿自動車道名古屋関線':'東名阪道','第二神明道路':'第二神明','西名阪自動車道':'西名阪道','東名高速道路':'東名','名神高速道路':'名神'};
 function _xsShortRoad(n){
@@ -9899,27 +9901,67 @@ function _xsEntranceLabel(s,nxt){
   }
   return '有料道路';
 }
+// ★v39e: 出口通過後の最初の分岐（_tollSpanTarget）は本文が「右折する」だけのことがあり
+//   方面名が取れない。発話側は出口ステップの方面名を使っているので、看板も同じ区間内を
+//   さかのぼって拾い、「有田・金屋方面」を出せるようにする。
+function _xsSpanHoumen(step){
+  try{
+    var h='';try{h=_forkHoumen(step)||'';}catch(e){h='';}
+    if(h)return h;
+    if(!step||!step._tollSpanTarget)return '';
+    var st=STATE.routeSteps||[];var i=st.indexOf(step);
+    if(i<0)return '';
+    for(var k=i-1;k>=0&&k>=i-4;k--){
+      if(!st[k]||!st[k]._tollSpan)break;
+      var h2='';try{h2=_forkHoumen(st[k])||'';}catch(e2){h2='';}
+      if(h2)return h2;
+    }
+    return '';
+  }catch(e){return '';}
+}
+// ★v39e: 距離を出す帯。hold=true は出しっぱなし（10m刻みのカウントダウン）、
+//   hold=false は「発話している間だけ」。
+function _xsBandOf(d,step,C){
+  try{
+    if(!step||!isFinite(d))return null;
+    var g=(STATE._routeGen||0)+':'+STATE.stepIdx+':';
+    if(!!STATE._routeHasToll&&_xsIsExit(step)){
+      if(d>C.showM&&d<=XS_EXIT_SHOW_M)return {key:g+'exdown',label:(Math.round(d/10)*10)+'m',hold:true};
+      if(d>1850&&d<=2150)return {key:g+'ex2k',label:'2km',hold:false};
+      if(d>850&&d<=1150)return {key:g+'ex1k',label:'1km',hold:false};
+      return null;   // 入口側にカウントダウンは付けない（出口のみ）
+    }
+    if(d<=C.showM)return null;                       // まもなく以降は従来表示
+    if(d>620&&d<=780)return {key:g+'g700',label:'700m',hold:false};
+    if(d>250&&d<=350)return {key:g+'g300',label:'300m',hold:false};
+    return null;
+  }catch(e){return null;}
+}
 // 看板に出す内容を1か所で決める。null＝出さない。
-function _xsPlanOf(d,step,isTurn,isFork,C){
+function _xsPlanOf(d,step,isTurn,isFork,C,farOK){
   if(!step)return null;
   var toll=!!STATE._routeHasToll;
+  // ★v39e: 色は「入口/出口かどうか」ではなく有料区間フラグで決める。
+  //   _computeTollSpan の区間＝有料に入る所〜出口通過後の最初の分岐＝「完全に一般道になるまで」。
+  //   8/31実走で「ランプを白浜方面に進む」が sp:true なのに青で出ていたのはこの判定漏れ。
+  var green=toll&&!!step._tollSpan;
   var nxt=null;
   try{var _ni=STATE.stepIdx+2;nxt=(_ni<STATE.routeSteps.length)?STATE.routeSteps[_ni]:null;}catch(e){nxt=null;}
-  // (1) 有料出口: 2km手前から
+  // (1) 有料出口: 500m手前から連続表示（2km/1km は _xsBandOf の発話帯が出す）
   if(toll&&_xsIsExit(step)){
-    if(d>XS_EXIT_SHOW_M)return null;
+    if(!farOK&&d>XS_EXIT_SHOW_M)return null;
     _XS.exitName=_xsExitLabel(step);
     return {color:'green',deg:_xsAngleOf(step),name:_XS.exitName,sub:'',hideM:XS_EXIT_HIDE_M};
   }
   // (2) 出口を過ぎた料金所: 通過するまで緑を継続
   if(toll&&_xsIsGate(step)&&_XS.exitName){
-    if(d>XS_EXIT_SHOW_M)return null;
+    if(!farOK&&d>XS_EXIT_SHOW_M)return null;
     return {color:'green',deg:null,name:_XS.exitName,sub:'料金所',hideM:XS_EXIT_HIDE_M};
   }
   // (3) 有料入口: 「まもなく」から。★v39d: 路線名の下に英語表記（阪和道 / Hanwa Expressway）
   if(toll&&_xsIsEntrance(step)){
     _XS.exitName='';
-    if(d>C.showM)return null;
+    if(!farOK&&d>C.showM)return null;
     var elab=_xsEntranceLabel(step,nxt);
     var eroma=_romaOf(elab);
     return {color:'green',deg:_xsAngleOf(step),name:elab,sub:(eroma||'入口'),en:!!eroma,hideM:C.hideM};
@@ -9927,9 +9969,9 @@ function _xsPlanOf(d,step,isTurn,isFork,C){
   // (4) 通常（青）。料金所を過ぎた方面分岐もここ
   _XS.exitName='';
   if(/roundabout|merge|ferry/.test(step.maneuver||''))return null;
-  var hou='';try{hou=_forkHoumen(step)||'';}catch(e){hou='';}
+  var hou=_xsSpanHoumen(step);   // ★v39e: 区間内は出口ステップの方面名も引き継ぐ
   if(!(isTurn||isFork||hou))return null;
-  if(d>C.showM)return null;
+  if(!farOK&&d>C.showM)return null;
   var deg=_xsAngleOf(step);
   var rawNm=_xsNameOf(step);
   var isCross=_xsIsCrossName(rawNm);
@@ -9937,13 +9979,14 @@ function _xsPlanOf(d,step,isTurn,isFork,C){
   // ★v39d: 方面名は「名前が取れないとき」の保険ではなく、交差点名でない（＝道路名しか無い）
   //   ときに優先する。料金所を過ぎた分岐で発話が「海南方面です」なのに看板が
   //   「国道42号」になっていたのはこの順序が逆だったため。
-  if(hou&&!isCross)return {color:'blue',deg:deg,name:hou+'方面',sub:'',hideM:C.hideM};
+  var col=green?'green':'blue';   // ★v39e
+  if(hou&&!isCross)return {color:col,deg:deg,name:hou+'方面',sub:'',hideM:C.hideM};
   if(deg===null)return null;
-  if(!nm)return {color:'blue',deg:deg,name:'',sub:'',hideM:C.hideM};
+  if(!nm)return {color:col,deg:deg,name:'',sub:'',hideM:C.hideM};
   // ★v39d: 交差点名だけ、下段にローマ字（HABU）。取れないときは従来どおり「交差点」
   var roma=isCross?_romaOf(_xsRomaKeyOf(step)):'';
-  if(roma)return {color:'blue',deg:deg,name:nm,sub:roma.toUpperCase(),en:true,hideM:C.hideM};
-  return {color:'blue',deg:deg,name:nm,sub:(isCross?'交差点':''),hideM:C.hideM};
+  if(roma)return {color:col,deg:deg,name:nm,sub:roma.toUpperCase(),en:true,hideM:C.hideM};
+  return {color:col,deg:deg,name:nm,sub:(isCross?'交差点':''),hideM:C.hideM};
 }
 // Ｕターン矢印（赤看板用）
 function _xsUturnSvg(){
@@ -10139,6 +10182,35 @@ function _xsTick(d,step,isTurn,isFork){
       return;
     }
     if(_XS.key==='uw'&&_XS.shown)_xsHide();
+    // ★v39e: 距離帯の看板。700m/300m/2km/1km は発話している間だけ、
+    //   有料出口の500m〜まもなくは出しっぱなしで10m刻みにカウントダウンする。
+    var B=null;try{B=_xsBandOf(d,step,C);}catch(_be){B=null;}
+    if(B){
+      var speaking=!!STATE._speaking&&(now-(STATE._speakingAt||0)<12000);
+      if(B.hold){_XS.bandOn=B.key;_XS.bandOffAt=0;}
+      else if(_XS.bandOn!==B.key){
+        if(_XS.bandDone!==B.key&&speaking){_XS.bandOn=B.key;_XS.bandOffAt=0;}
+      }else if(speaking){_XS.bandOffAt=0;}
+      else if(!_XS.bandOffAt){_XS.bandOffAt=now+XS_BAND_TAIL_MS;}
+      else if(now>=_XS.bandOffAt){_XS.bandOn='';_XS.bandDone=B.key;}
+    }else if(_XS.bandOn){_XS.bandOn='';}
+    if(B&&_XS.bandOn===B.key){
+      var PB=null;try{PB=_xsPlanOf(d,step,isTurn,isFork,C,true);}catch(_pbe){PB=null;}
+      if(PB){
+        PB.sub=B.label;PB.en=false;PB.hideM=Infinity;
+        var bkey='band:'+B.key;
+        var same=(_XS.shown&&_XS.key===bkey);
+        if(!same||_XS.name!==PB.name||!_XS.opt||_XS.opt.sub!==B.label){
+          if(_XS.shown&&!same)_xsHide();
+          _XS.key=bkey;_XS.deg=PB.deg;_XS.name=PB.name;_XS.hideM=Infinity;_XS.holdUntil=0;
+          _xsUpdate(PB.deg,PB.name,PB);
+          if(!same){try{_navLog('xsign',{step:STATE.stepIdx,deg:(PB.deg===null||PB.deg===undefined)?null:Math.round(PB.deg),d:Math.round(d),nm:_XS.name,c:PB.color,band:B.label});}catch(_bl){}}
+        }
+        _XS.at=now;
+        return;
+      }
+    }
+    if(_XS.key&&_XS.key.indexOf('band:')===0&&_XS.shown)_xsHide();
     var key=(STATE._routeGen||0)+':'+STATE.stepIdx;
     if(_XS.shown&&_XS.key===key){                 // いま出している交差点
       _XS.at=now;
