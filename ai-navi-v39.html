@@ -415,6 +415,8 @@ body:not(.nav-mode) #x-sign{display:none !important;}
 #x-name{flex:1 1 auto;min-width:0;overflow:hidden;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 8px;color:#fff;text-align:center;}
 #x-name .xs-jp{font-weight:800;line-height:1.05;letter-spacing:0.01em;white-space:nowrap;}
 #x-name .xs-sub{font-size:11px;opacity:0.85;margin-top:4px;letter-spacing:0.06em;white-space:nowrap;}
+/* ★v39d: 交差点名の下に出すローマ字行（HABU / Hanwa Expressway） */
+#x-name .xs-en{font-size:15px;font-weight:600;opacity:0.95;margin-top:3px;letter-spacing:0.09em;white-space:nowrap;}
 /* 設定パネルのスライダー（既存の音量/偏角スライダーと同一の意匠） */
 #xs-blen-slider,#xs-offx-slider,#xs-show-slider{width:100%;-webkit-appearance:none;appearance:none;height:6px;background:rgba(255,255,255,0.1);border-radius:3px;outline:none;touch-action:none;}
 #xs-blen-slider::-webkit-slider-thumb,#xs-offx-slider::-webkit-slider-thumb,#xs-show-slider::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:18px;height:18px;border-radius:50%;background:rgba(0,200,255,0.9);border:2px solid rgba(255,255,255,0.3);cursor:pointer;}
@@ -5604,6 +5606,19 @@ function _computeTollSpan(steps){
 // ============================================================
 var _yomiCache={};
 try{var _ycRaw=localStorage.getItem('ainavi_yomi');if(_ycRaw){_yomiCache=JSON.parse(_ycRaw)||{};}}catch(e){_yomiCache={};}
+// ★v39d(純追加): 交差点名・有料路線名のローマ字（英語表記）キャッシュ。
+//   英語ルートは _fetchStepYomi が既に1回だけ取得している。従来はカタカナ読みに
+//   変換した後ローマ字を捨てていたので、それを保存するだけ＝API呼び出しは増えない。
+var _romaCache={};
+try{var _rcRaw=localStorage.getItem('ainavi_roma');if(_rcRaw){_romaCache=JSON.parse(_rcRaw)||{};}}catch(e){_romaCache={};}
+function _saveRomaCache(){
+  try{
+    var ks=Object.keys(_romaCache);
+    if(ks.length>400){var trim={};ks.slice(-400).forEach(function(k){trim[k]=_romaCache[k];});_romaCache=trim;}
+    localStorage.setItem('ainavi_roma',JSON.stringify(_romaCache));
+  }catch(e){}
+}
+function _romaOf(key){try{return (key&&_romaCache[key])?_romaCache[key]:'';}catch(e){return '';}}
 function _saveYomiCache(){
   try{
     var ks=Object.keys(_yomiCache);
@@ -5874,6 +5889,33 @@ function _enJunctionName(step){
     return '';
   }catch(e){return '';}
 }
+// ★v39d: 英語ルートのステップから有料路線名（Hanwa Expressway 等）を抽出。
+function _enRoadName(step){
+  try{
+    var raw=(step&&step.instructions)||'';
+    var kind=/(Expressway|Expwy|Highway|Toll\s?Road|Bypass|Skyline)/i;
+    var latin=/^[A-Za-zĀĒĪŌŪāēīōū'’\-\s\.0-9]+$/;
+    var bolds=raw.match(/<b>[\s\S]*?<\/b>/g)||[];
+    for(var i=0;i<bolds.length;i++){
+      var t=stripHtml(bolds[i]).replace(/\s+/g,' ').trim();
+      if(t.length<4||t.length>32)continue;
+      if(!latin.test(t))continue;
+      if(kind.test(t))return t;
+    }
+    var mp=stripHtml(raw).match(/([A-Za-zĀĒĪŌŪāēīōū'’\-\s\.]{3,26}(?:Expressway|Expwy|Highway|Toll\s?Road|Bypass))/);
+    if(mp&&mp[1])return mp[1].replace(/\s+/g,' ').trim();
+    return '';
+  }catch(e){return '';}
+}
+// ★v39d: 有料入口ステップなら、看板に出す短縮路線名（阪和道）をローマ字辞書のキーとして返す。
+function _xsEntranceRomaKey(step,nxt){
+  try{
+    if(!step||!_xsIsEntrance(step)||_xsIsExit(step))return '';
+    var lab=_xsEntranceLabel(step,nxt);
+    if(!lab||lab==='有料道路')return '';
+    return lab;
+  }catch(e){return '';}
+}
 // 同じルートを英語で再取得し、漢字交差点名→カタカナ読みの対応を _yomiCache へ蓄積する。
 // ja/en のステップは同一パラメータなら1対1対応するが、念のため各indexの始点座標が
 // 40m以内で一致するステップのみ採用する（ルート差異・ズレの安全弁）。
@@ -5893,7 +5935,12 @@ function _fetchStepYomi(result,routeIndex){
       return b;
     };
     var need=false;
-    for(var i=0;i<steps.length;i++){var b0=_target(_kanjiCrossName(steps[i]));if(b0&&!_yomiCache[b0]){need=true;break;}}
+    for(var i=0;i<steps.length;i++){
+      var b0=_target(_kanjiCrossName(steps[i]));
+      if(b0&&(!_yomiCache[b0]||!_romaCache[b0])){need=true;break;}   // ★v39d: ローマ字未取得も対象
+      var e0=_xsEntranceRomaKey(steps[i],steps[i+1]);                 // ★v39d: 有料入口の路線名
+      if(e0&&!_romaCache[e0]){need=true;break;}
+    }
     if(!need)return; // 全て取得済み（またはルート上に交差点名なし）→英語ルート照会は行わない
     var dsvcY=new google.maps.DirectionsService();
     dsvcY.route({origin:leg.start_location,destination:leg.end_location,travelMode:google.maps.TravelMode.DRIVING,avoidHighways:false,region:'jp',language:'en'},function(res,status){
@@ -5901,21 +5948,34 @@ function _fetchStepYomi(result,routeIndex){
         if(status!==google.maps.DirectionsStatus.OK)return;
         var enSteps=res.routes[0].legs[0].steps;if(!enSteps)return;
         var n=Math.min(steps.length,enSteps.length);
-        var added=false;
+        var added=false,addedR=false;
         for(var i=0;i<n;i++){
           var base=_target(_kanjiCrossName(steps[i]));
-          if(!base||_yomiCache[base])continue;
+          var ekey=_xsEntranceRomaKey(steps[i],steps[i+1]);                 // ★v39d
+          if(!base&&!ekey)continue;
+          if(base&&_yomiCache[base]&&_romaCache[base]&&!ekey)continue;
           try{
             var dA=google.maps.geometry.spherical.computeDistanceBetween(steps[i].start_location,enSteps[i].start_location);
             if(dA>40)continue; // ステップ対応が取れない→スキップ（漢字のまま）
           }catch(_a){}
-          var en=_enJunctionName(enSteps[i]);
-          if(!en)continue;
-          var kana=_romajiToKana(en);
-          // ★読み修正2: キーは「交差点」を外した基準名（船尾東）。発話側で必要に応じ「交差点」を付ける。
-          if(kana&&kana.length>=2){_yomiCache[base]=kana;added=true;}
+          if(base){
+            var en=_enJunctionName(enSteps[i]);
+            if(en){
+              if(!_yomiCache[base]){
+                var kana=_romajiToKana(en);
+                // ★読み修正2: キーは「交差点」を外した基準名（船尾東）。発話側で必要に応じ「交差点」を付ける。
+                if(kana&&kana.length>=2){_yomiCache[base]=kana;added=true;}
+              }
+              if(!_romaCache[base]){_romaCache[base]=en;addedR=true;}      // ★v39d: ローマ字も残す
+            }
+          }
+          if(ekey&&!_romaCache[ekey]){                                     // ★v39d: 阪和道→Hanwa Expressway
+            var er=_enRoadName(enSteps[i])||((i+1<enSteps.length)?_enRoadName(enSteps[i+1]):'');
+            if(er){_romaCache[ekey]=er;addedR=true;}
+          }
         }
         if(added)_saveYomiCache();
+        if(addedR)_saveRomaCache();
       }catch(_e2){}
     });
   }catch(e){}
@@ -9856,23 +9916,34 @@ function _xsPlanOf(d,step,isTurn,isFork,C){
     if(d>XS_EXIT_SHOW_M)return null;
     return {color:'green',deg:null,name:_XS.exitName,sub:'料金所',hideM:XS_EXIT_HIDE_M};
   }
-  // (3) 有料入口: 「まもなく」から
+  // (3) 有料入口: 「まもなく」から。★v39d: 路線名の下に英語表記（阪和道 / Hanwa Expressway）
   if(toll&&_xsIsEntrance(step)){
     _XS.exitName='';
     if(d>C.showM)return null;
-    return {color:'green',deg:_xsAngleOf(step),name:_xsEntranceLabel(step,nxt),sub:'入口',hideM:C.hideM};
+    var elab=_xsEntranceLabel(step,nxt);
+    var eroma=_romaOf(elab);
+    return {color:'green',deg:_xsAngleOf(step),name:elab,sub:(eroma||'入口'),en:!!eroma,hideM:C.hideM};
   }
-  // (4) 通常（青）。料金所を過ぎた方面分岐もここ＝方向が取れなければ方面名だけ
+  // (4) 通常（青）。料金所を過ぎた方面分岐もここ
   _XS.exitName='';
   if(/roundabout|merge|ferry/.test(step.maneuver||''))return null;
   var hou='';try{hou=_forkHoumen(step)||'';}catch(e){hou='';}
   if(!(isTurn||isFork||hou))return null;
   if(d>C.showM)return null;
   var deg=_xsAngleOf(step);
-  var nm=_xsNameOf(step);
-  if(!nm&&hou)return {color:'blue',deg:deg,name:hou+'方面',sub:'',hideM:C.hideM};
+  var rawNm=_xsNameOf(step);
+  var isCross=_xsIsCrossName(rawNm);
+  var nm=_xsBaseName(rawNm);
+  // ★v39d: 方面名は「名前が取れないとき」の保険ではなく、交差点名でない（＝道路名しか無い）
+  //   ときに優先する。料金所を過ぎた分岐で発話が「海南方面です」なのに看板が
+  //   「国道42号」になっていたのはこの順序が逆だったため。
+  if(hou&&!isCross)return {color:'blue',deg:deg,name:hou+'方面',sub:'',hideM:C.hideM};
   if(deg===null)return null;
-  return {color:'blue',deg:deg,name:nm,sub:'交差点',hideM:C.hideM};
+  if(!nm)return {color:'blue',deg:deg,name:'',sub:'',hideM:C.hideM};
+  // ★v39d: 交差点名だけ、下段にローマ字（HABU）。取れないときは従来どおり「交差点」
+  var roma=isCross?_romaOf(_xsRomaKeyOf(step)):'';
+  if(roma)return {color:'blue',deg:deg,name:nm,sub:roma.toUpperCase(),en:true,hideM:C.hideM};
+  return {color:'blue',deg:deg,name:nm,sub:(isCross?'交差点':''),hideM:C.hideM};
 }
 // Ｕターン矢印（赤看板用）
 function _xsUturnSvg(){
@@ -9978,9 +10049,22 @@ function _xsFitName(){
     var avail=nm.clientWidth-6;if(!(avail>10))return;
     var fs=parseFloat(jp.style.fontSize)||24,g=0;
     while(jp.scrollWidth>avail&&fs>11&&g<40){fs-=1.5;jp.style.fontSize=fs+'px';g++;}
+    // ★v39d: ローマ字行（Hanwa Expressway 等）も枠内に収める
+    var en=nm.getElementsByClassName('xs-en')[0];
+    if(en){var es=parseFloat(window.getComputedStyle(en).fontSize)||15,g2=0;
+      while(en.scrollWidth>avail&&es>8&&g2<30){es-=1;en.style.fontSize=es+'px';g2++;}}
   }catch(e){}
 }
 
+// ★v39d: 看板の上段は「羽生」のように交差点の語を外して出す（下段にローマ字を置くため）
+function _xsBaseName(n){
+  n=String(n||'').replace(/[<>]/g,'').replace(/[\s　]+/g,'');
+  n=n.replace(/[（(]\s*交差点\s*[）)]$/,'').replace(/交差点$/,'');
+  return n;
+}
+function _xsIsCrossName(n){return /交差点\s*[）)]?$/.test(String(n||''));}
+// ローマ字辞書のキーは取得側(_fetchStepYomi)と同じ式にする
+function _xsRomaKeyOf(step){try{return _yomiKey(String(_kanjiCrossName(step)||''));}catch(e){return '';}}
 function _xsNameOf(step){
   var n='';
   try{n=_kanjiCrossName(step)||'';}catch(e){n='';}
@@ -10015,10 +10099,11 @@ function _xsUpdate(deg,name,opt){
   }
   if(nm){
     if(name){
-      var L=name.length,fs=(L<=3)?38:((L===4)?33:((L===5)?27:((L===6)?23:19)));
+      var L=name.length,fs=(L<=3)?42:((L===4)?36:((L===5)?30:((L===6)?25:21))); // ★v39d: 少しだけ大きく
       if(noArrow)fs=Math.round(fs*1.2);                  // ★v39: 矢印が無い分だけ大きく
       var _sub=(opt.sub!==undefined&&opt.sub!==null)?opt.sub:'交差点';
-      nm.innerHTML='<div class="xs-jp" style="font-size:'+fs+'px">'+name+'</div>'+(_sub?'<div class="xs-sub">'+_sub+'</div>':'');
+      var _cls=opt.en?'xs-sub xs-en':'xs-sub';           // ★v39d: ローマ字行は少し大きめ
+      nm.innerHTML='<div class="xs-jp" style="font-size:'+fs+'px">'+name+'</div>'+(_sub?'<div class="'+_cls+'">'+_sub+'</div>':'');
     }else{
       // ★v38: 交差点名が取れない場合は方向の言葉を入れる（空白の看板にしない）
       var a=Math.abs(deg),w;
