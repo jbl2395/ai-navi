@@ -417,6 +417,8 @@ body:not(.nav-mode) #x-sign{display:none !important;}
 #x-name .xs-sub{font-size:11px;opacity:0.85;margin-top:4px;letter-spacing:0.06em;white-space:nowrap;}
 /* ★v39d: 交差点名の下に出すローマ字行（HABU / Hanwa Expressway） */
 #x-name .xs-en{font-size:15px;font-weight:600;opacity:0.95;margin-top:3px;letter-spacing:0.09em;white-space:nowrap;}
+/* ★v39h: 700m/300m と有料出口のカウントダウンは走行中に一目で読める大きさにする */
+#x-name .xs-dist{font-size:30px;font-weight:800;opacity:1;margin-top:2px;letter-spacing:0.02em;white-space:nowrap;}
 /* 設定パネルのスライダー（既存の音量/偏角スライダーと同一の意匠） */
 #xs-blen-slider,#xs-offx-slider,#xs-show-slider{width:100%;-webkit-appearance:none;appearance:none;height:6px;background:rgba(255,255,255,0.1);border-radius:3px;outline:none;touch-action:none;}
 #xs-blen-slider::-webkit-slider-thumb,#xs-offx-slider::-webkit-slider-thumb,#xs-show-slider::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:18px;height:18px;border-radius:50%;background:rgba(0,200,255,0.9);border:2px solid rgba(255,255,255,0.3);cursor:pointer;}
@@ -1921,17 +1923,20 @@ function _tnlBuildList(){
     var merged=[];
     for(var r=0;r<runs.length;r++){
       var last=merged.length?merged[merged.length-1]:null;
-      if(last&&runs[r].sIn-last.sOut<=TNL_MERGE_GAP_M)last.sOut=runs[r].sOut;
-      else merged.push({sIn:runs[r].sIn,sOut:runs[r].sOut});
+      // ★v39h(C): 統合しても元の1本ずつを parts に残す。DR/クランプは統合後の1本で扱い、
+      //   出口予告だけは元のトンネル単位で出す（出口の先にICがあるため）。
+      if(last&&runs[r].sIn-last.sOut<=TNL_MERGE_GAP_M){last.sOut=runs[r].sOut;last.parts.push({sIn:runs[r].sIn,sOut:runs[r].sOut,said:false});}
+      else merged.push({sIn:runs[r].sIn,sOut:runs[r].sOut,parts:[{sIn:runs[r].sIn,sOut:runs[r].sOut,said:false}]});
     }
     var list=[];
     for(var n=0;n<merged.length;n++){
       var len=merged[n].sOut-merged[n].sIn;
       if(len<TNL_MIN_LEN_M)continue; // ★300m未満は登録しない＝発話もクランプもしない
-      list.push({sIn:merged[n].sIn,sOut:merged[n].sOut,len:len,said:false});
+      list.push({sIn:merged[n].sIn,sOut:merged[n].sOut,len:len,said:false,parts:merged[n].parts});
     }
     STATE._tnlList=list;
-    _navLog('tnl-list',{n:list.length,len:(function(){var o=[];for(var i=0;i<list.length;i++)o.push(Math.round(list[i].len));return o;})()});
+    _navLog('tnl-list',{n:list.length,len:(function(){var o=[];for(var i=0;i<list.length;i++)o.push(Math.round(list[i].len));return o;})(),
+      pt:(function(){var o=[];for(var i=0;i<list.length;i++)o.push((list[i].parts||[]).length);return o;})()}); // ★v39h: 統合前の本数
   }catch(e){ try{_navLog('tnl-err',{at:'build',e:String(e).slice(0,40)});}catch(_e){} }
 }
 // Overpass へ問い合わせ（ルート沿いの座標列で around 検索）
@@ -2037,14 +2042,32 @@ function _tnlDistPhrase(m){
 function _tnlSayPre(t,s,src){
   try{
     if(!t||t.said)return false;
-    t.said=true;
+    // ★v39h(C): 統合トンネルは元のトンネル1本ずつを対象にする。
+    //   まだ言っていない part のうち、いま中にいる（出口50m手前までの）ものを選ぶ。
+    var _pt=null,_pi=-1,_pl=t.parts||null;
+    if(_pl&&_pl.length){
+      // 出口50m手前を過ぎた part は「言い損ねた」＝以後の対象から外す
+      for(var _k0=0;_k0<_pl.length;_k0++){ if(!_pl[_k0].said&&s>=_pl[_k0].sOut-50)_pl[_k0].said=true; }
+      for(var _k=0;_k<_pl.length;_k++){
+        if(_pl[_k].said)continue;
+        if(s>=_pl[_k].sIn&&s<_pl[_k].sOut-50){_pt=_pl[_k];_pi=_k;break;}
+      }
+      // まだ1本目の手前（＝入口前の予告）だけは先頭 part を対象にする。
+      // 中にいるのにどの part にも入っていない＝切れ目を走っている＝次の part に入るまで黙る。
+      if(!_pt&&s<_pl[0].sIn){ for(var _k2=0;_k2<_pl.length;_k2++){ if(!_pl[_k2].said){_pt=_pl[_k2];_pi=_k2;break;} } }
+      if(!_pt)return false;
+      _pt.said=true;
+      var _allSaid=true;for(var _k3=0;_k3<_pl.length;_k3++){if(!_pl[_k3].said){_allSaid=false;break;}}
+      t.said=_allSaid;
+    }else{t.said=true;}
+    var _tIn=_pt?_pt.sIn:t.sIn, _tOut=_pt?_pt.sOut:t.sOut, _tLen=_tOut-_tIn;
     // ★v31: 既に入口を過ぎている（DR突入時の保険）なら、全長ではなく出口までの残りを言う
-    var rem=(s>t.sIn)?(t.sOut-s):t.len; if(rem<0)rem=0;
+    var rem=(s>_tIn)?(_tOut-s):_tLen; if(rem<0)rem=0;
     var msg='およそ'+_tnlDistPhrase(rem)+'先、トンネル出口です。'; // ★v32: 段階丸め（四捨五入）
-    var b=_tnlBranchAfter(t.sOut,TNL_BRANCH_M),tail='';
+    var b=_tnlBranchAfter(_tOut,TNL_BRANCH_M),tail='';
     if(b){var ph=_tnlBranchPhrase(b.step);if(ph)tail='その先、'+ph.full;}
     if(tail)msg+=tail;
-    try{_navLog('tnl-pre',{len:Math.round(t.len),d:Math.round(t.sIn-s),tail:tail.slice(0,24),step:STATE.stepIdx,src:src||'fix'});}catch(_e){}
+    try{_navLog('tnl-pre',{len:Math.round(_tLen),d:Math.round(_tIn-s),tail:tail.slice(0,24),step:STATE.stepIdx,src:src||'fix',pi:_pi,pn:(_pl?_pl.length:1)});}catch(_e){}
     speakTTSWithChime(msg);
     return true;
   }catch(e){ try{_navLog('tnl-err',{at:'say',e:String(e).slice(0,40)});}catch(_e){} return false; }
@@ -2110,7 +2133,9 @@ function _tnlTickDr(lat,lng){
     if(s===null)return;
     for(var i=0;i<list.length;i++){
       var t=list[i];
-      if(!t.said&&s>=t.sIn+TNL_IN_M&&s<t.sOut-50){ _tnlSayPre(t,s,'dr'); }
+      // ★v39h(C): 統合トンネルは part がまだ残っていれば t.said でも呼ぶ（part側で判定）
+      var _pend=false;try{var _p=t.parts;if(_p)for(var _q=0;_q<_p.length;_q++){if(!_p[_q].said&&s<_p[_q].sOut-50){_pend=true;break;}}}catch(_pe){}
+      if((!t.said||_pend)&&s>=t.sIn+TNL_IN_M&&s<t.sOut-50){ _tnlSayPre(t,s,'dr'); }
     }
   }catch(e){ try{_navLog('tnl-err',{at:'tickdr',e:String(e).slice(0,40)});}catch(_e){} }
 }
@@ -5912,7 +5937,7 @@ function _enRoadName(step){
 // ★v39d: 有料入口ステップなら、看板に出す短縮路線名（阪和道）をローマ字辞書のキーとして返す。
 function _xsEntranceRomaKey(step,nxt){
   try{
-    if(!step||!_xsIsEntrance(step)||_xsIsExit(step))return '';
+    if(!step||!_xsTollStep(step)||!_xsIsEntrance(step)||_xsIsExit(step))return '';
     var lab=_xsEntranceLabel(step,nxt);
     if(!lab||lab==='有料道路')return '';
     return lab;
@@ -7888,8 +7913,19 @@ function startGpsTracking(map,destGeo,fromStepIdx){
             if(!STATE._lkFrom)STATE._lkFrom=_lkNow;
             STATE._lkLastRej={lat:_lkLa,lng:_lkLn};
             STATE._lkN=(STATE._lkN||0)+1;
+            // ★v39h(A): 位置は従来どおり捨てるが、精度の良いfixの「速度」だけは採る。
+            //   9/1実走: 締め出し中に実速度が80〜109km/hまで上がったのにDRは入口時点の73km/hを
+            //   4分49秒引きずり、出口で1587mずれた（5842m進んだ実測は7429m＝92.5km/h）。
+            //   位置を採らない限りトンネル内での誤差混入は起きず、速度だけ追従させれば
+            //   ドリフトが育たない＝gap復帰(150m以内)も成立し続ける。
+            try{
+              var _lkSp=pos.coords.speed;
+              if(_lkAcc<=TNL_LOCK_GOOD_ACC_M&&_lkSp!=null&&!isNaN(_lkSp)&&_lkSp>=0&&_lkSp<=DR_MAX_SPEED_MPS){
+                STATE._drSpeed=_lkSp;
+              }
+            }catch(_lksp){}
             if(STATE._lkN<=2||STATE._lkN%20===0){
-              try{_navLog('tnl-lock',{acc:Math.round(_lkAcc),spd:Math.round(((pos.coords.speed||0)*3.6)),n:STATE._lkN,dr:STATE._drActive?1:0});}catch(_lke2){}
+              try{_navLog('tnl-lock',{acc:Math.round(_lkAcc),spd:Math.round(((pos.coords.speed||0)*3.6)),drs:Math.round((STATE._drSpeed||0)*3.6),n:STATE._lkN,dr:STATE._drActive?1:0});}catch(_lke2){}
             }
             // ロスト相当まで巻き戻す＝次のDRティック(250ms)で _drEnter する
             STATE._lastFixTime=Math.min(STATE._lastFixTime||0,Date.now()-DR_LOST_NO_FIX_MS-1);
@@ -9874,6 +9910,35 @@ function _xsShortRoad(n){
   return n;
 }
 function _xsInstr(s){try{return stripHtml((s&&s.instructions)||'');}catch(e){return '';}}
+// ★v39g: 看板の色は step._tollSpan では決めない。
+//   _tollSpan は発話の文脈用で、方面表記に「〜インター」が入っただけでも区間が開く
+//   （_spanOpenStep が _TOLLCTX_RE でヒットする）。9/1の実走では「船尾東（交差点）を右折して
+//   海南バイパス/国道42号に入る (…インター 方面)」で区間が開き、そこから先がずっと緑になった。
+//   色は Google が本文末尾に付ける「有料区間」だけを根拠にする。
+function _xsTollStep(step){
+  try{
+    if(!step)return false;
+    var si=_xsInstr(step);
+    if(/有料区間/.test(si))return true;
+    if(/ramp/.test(step.maneuver||'')&&_TOLLCTX_RE.test(si))return true;
+    return false;
+  }catch(e){return false;}
+}
+// 有料区間そのもの＋「出口を出た直後の方面分岐」までを緑にする＝完全に一般道へ戻るまで
+function _xsGreenStep(step){
+  try{
+    if(_xsTollStep(step))return true;
+    if(step&&step._tollSpanTarget){
+      var st=STATE.routeSteps||[],i=st.indexOf(step);
+      if(i>0)for(var k=i-1;k>=0&&k>=i-3;k--){
+        if(!st[k])break;
+        if(_xsTollStep(st[k]))return true;
+        if(!st[k]._tollSpan)break;
+      }
+    }
+    return false;
+  }catch(e){return false;}
+}
 function _xsIsExit(s){
   if(!s)return false;
   return /出口/.test(_xsInstr(s))||/exit/i.test(s.maneuver||'');
@@ -9916,10 +9981,12 @@ function _xsSpanHoumen(step){
     if(!step||!step._tollSpanTarget)return '';
     var st=STATE.routeSteps||[];var i=st.indexOf(step);
     if(i<0)return '';
+    var sawToll=false;                      // ★v39g: 実際に有料区間を通った場合だけ引き継ぐ
     for(var k=i-1;k>=0&&k>=i-4;k--){
       if(!st[k]||!st[k]._tollSpan)break;
+      if(_xsTollStep(st[k]))sawToll=true;
       var h2='';try{h2=_forkHoumen(st[k])||'';}catch(e2){h2='';}
-      if(h2)return h2;
+      if(h2&&sawToll)return h2;
     }
     return '';
   }catch(e){return '';}
@@ -9930,7 +9997,7 @@ function _xsBandOf(d,step,C){
   try{
     if(!step||!isFinite(d))return null;
     var g=(STATE._routeGen||0)+':'+STATE.stepIdx+':';
-    if(!!STATE._routeHasToll&&_xsIsExit(step)){
+    if(!!STATE._routeHasToll&&_xsTollStep(step)&&_xsIsExit(step)){
       if(d>C.showM&&d<=XS_EXIT_SHOW_M)return {key:g+'exdown',label:(Math.round(d/10)*10)+'m',hold:true};
       if(d>1850&&d<=2150)return {key:g+'ex2k',label:'2km',hold:false};
       if(d>850&&d<=1150)return {key:g+'ex1k',label:'1km',hold:false};
@@ -9949,11 +10016,11 @@ function _xsPlanOf(d,step,isTurn,isFork,C,farOK){
   // ★v39e: 色は「入口/出口かどうか」ではなく有料区間フラグで決める。
   //   _computeTollSpan の区間＝有料に入る所〜出口通過後の最初の分岐＝「完全に一般道になるまで」。
   //   8/31実走で「ランプを白浜方面に進む」が sp:true なのに青で出ていたのはこの判定漏れ。
-  var green=toll&&!!step._tollSpan;
+  var green=toll&&_xsGreenStep(step);   // ★v39g: _tollSpan では広すぎたので厳密判定へ
   var nxt=null;
   try{var _ni=STATE.stepIdx+2;nxt=(_ni<STATE.routeSteps.length)?STATE.routeSteps[_ni]:null;}catch(e){nxt=null;}
   // (1) 有料出口: 500m手前から連続表示（2km/1km は _xsBandOf の発話帯が出す）
-  if(toll&&_xsIsExit(step)){
+  if(toll&&_xsTollStep(step)&&_xsIsExit(step)){
     if(!farOK&&d>XS_EXIT_SHOW_M)return null;
     _XS.exitName=_xsExitLabel(step);
     return {color:'green',deg:_xsAngleOf(step),name:_XS.exitName,sub:'',hideM:XS_EXIT_HIDE_M};
@@ -9964,7 +10031,7 @@ function _xsPlanOf(d,step,isTurn,isFork,C,farOK){
     return {color:'green',deg:null,name:_XS.exitName,sub:'料金所',hideM:XS_EXIT_HIDE_M};
   }
   // (3) 有料入口: 「まもなく」から。★v39d: 路線名の下に英語表記（阪和道 / Hanwa Expressway）
-  if(toll&&_xsIsEntrance(step)){
+  if(toll&&_xsTollStep(step)&&_xsIsEntrance(step)){
     _XS.exitName='';
     if(!farOK&&d>C.showM)return null;
     var elab=_xsEntranceLabel(step,nxt);
@@ -10101,6 +10168,9 @@ function _xsFitName(){
     var en=nm.getElementsByClassName('xs-en')[0];
     if(en){var es=parseFloat(window.getComputedStyle(en).fontSize)||15,g2=0;
       while(en.scrollWidth>avail&&es>8&&g2<30){es-=1;en.style.fontSize=es+'px';g2++;}}
+    var ds=nm.getElementsByClassName('xs-dist')[0];   // ★v39h: 距離行も枠内に収める
+    if(ds){var dz=parseFloat(window.getComputedStyle(ds).fontSize)||30,g3=0;
+      while(ds.scrollWidth>avail&&dz>12&&g3<30){dz-=1.5;ds.style.fontSize=dz+'px';g3++;}}
   }catch(e){}
 }
 
@@ -10150,7 +10220,7 @@ function _xsUpdate(deg,name,opt){
       var L=name.length,fs=(L<=3)?42:((L===4)?36:((L===5)?30:((L===6)?25:21))); // ★v39d: 少しだけ大きく
       if(noArrow)fs=Math.round(fs*1.2);                  // ★v39: 矢印が無い分だけ大きく
       var _sub=(opt.sub!==undefined&&opt.sub!==null)?opt.sub:'交差点';
-      var _cls=opt.en?'xs-sub xs-en':'xs-sub';           // ★v39d: ローマ字行は少し大きめ
+      var _cls=opt.dist?'xs-sub xs-dist':(opt.en?'xs-sub xs-en':'xs-sub'); // ★v39h: 距離行は大きく
       nm.innerHTML='<div class="xs-jp" style="font-size:'+fs+'px">'+name+'</div>'+(_sub?'<div class="'+_cls+'">'+_sub+'</div>':'');
     }else{
       // ★v38: 交差点名が取れない場合は方向の言葉を入れる（空白の看板にしない）
@@ -10202,7 +10272,7 @@ function _xsTick(d,step,isTurn,isFork){
     if(B&&_XS.bandOn===B.key){
       var PB=null;try{PB=_xsPlanOf(d,step,isTurn,isFork,C,true);}catch(_pbe){PB=null;}
       if(PB){
-        PB.sub=B.label;PB.en=false;PB.hideM=Infinity;
+        PB.sub=B.label;PB.en=false;PB.dist=true;PB.hideM=Infinity;   // ★v39h: 距離行は大きく
         var bkey='band:'+B.key;
         var same=(_XS.shown&&_XS.key===bkey);
         if(!same||_XS.name!==PB.name||!_XS.opt||_XS.opt.sub!==B.label){
