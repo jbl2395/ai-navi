@@ -2259,7 +2259,7 @@ function navLogText(filter){
     var a=_navLogLoad()||[],out=[];
     for(var i=0;i<a.length;i++){
       var x=a[i];
-      if(filter==='dr'&&!/^(dr-|tun-|reroute|rejoin|harvest|headprobe|headvia|headsrc|head0|head-|dispsnap|tnl-|turnname|alive|boot|nav-|jserr|jsrej|net|life|resume-|backnear|xsign|uturn-)/.test(x.tag))continue;
+      if(filter==='dr'&&!/^(dr-|tun-|reroute|rejoin|harvest|headprobe|headvia|headsrc|head0|head-|dispsnap|tnl-|turnname|alive|boot|nav-|jserr|jsrej|net|life|resume-|backnear|xsign|uturn-|yomi-)/.test(x.tag))continue;
       out.push(x.t+' ['+x.tag+'] '+(x.d?JSON.stringify(x.d):''));
     }
     // ★v31(B案): 先頭に重要ログ枠を付ける（走行ログが溢れても消えない分）
@@ -5106,7 +5106,9 @@ function triggerReroute(currentMinDist){
       }catch(_na){_noAlt=false;}
       var req={origin:new google.maps.LatLng(origin.lat,origin.lng),destination:new google.maps.LatLng(STATE.currentDestGeo.lat,STATE.currentDestGeo.lng),travelMode:google.maps.TravelMode.DRIVING,avoidHighways:avoidHighways,region:'jp',language:'ja',provideRouteAlternatives:!_noAlt};
       _navLog('reroute-req',{try:_retryCount,alt:!_noAlt,spd:Math.round((STATE._drSpeed||0)*3.6)});
+      var _rqAt=Date.now(); // ★v39f: 要求→応答の実測ms。「遅かっただけ」か「ロジックが弾いた」かを切り分ける
       dsvc.route(req,function(result,status){
+        try{_navLog('reroute-resp',{ms:Date.now()-_rqAt,st:String(status),cand:(result&&result.routes)?result.routes.length:0,try:_retryCount});}catch(_rr){}
         if(status===google.maps.DirectionsStatus.OK){
           _lastResult=result;
           // 候補を採点し、最良（右折/Uターン/戻りが少ない）を選ぶ。
@@ -5943,7 +5945,10 @@ function _fetchStepYomi(result,routeIndex){
     }
     if(!need)return; // 全て取得済み（またはルート上に交差点名なし）→英語ルート照会は行わない
     var dsvcY=new google.maps.DirectionsService();
+    var _yqAt=Date.now(); // ★v39f: 英語ルート照会の実測ms（リルートと重なっていないかを見るため）
+    try{_navLog('yomi-req',{n:steps.length});}catch(_yq){}
     dsvcY.route({origin:leg.start_location,destination:leg.end_location,travelMode:google.maps.TravelMode.DRIVING,avoidHighways:false,region:'jp',language:'en'},function(res,status){
+      try{_navLog('yomi-resp',{ms:Date.now()-_yqAt,st:String(status)});}catch(_yr){}
       try{
         if(status!==google.maps.DirectionsStatus.OK)return;
         var enSteps=res.routes[0].legs[0].steps;if(!enSteps)return;
