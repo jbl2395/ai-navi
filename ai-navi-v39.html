@@ -1128,6 +1128,12 @@ function _apSideTick(cur,spdKmh){
 // ★② リルート連呼防止（クールダウン＆最低移動距離）と元ルート合流の先送り距離
 var REROUTE_COOLDOWN_MS = 12000; // ★保存用方式: 8秒→12秒
 var REROUTE_MIN_MOVE_M = 80;
+// ★v40(問題1): 再計算が全滅(_allFailed)した直後の立て直し。
+//   9/2実走: 06:38:13 allfail → startGpsTracking が開始グレース(25秒)を張り直したため
+//   次のリルートが 06:38:40 まで27秒ブロックされ、その間ずっと旧ルート＝通過済みの
+//   「土生」を案内し続けた。失敗直後だけグレースを短縮し、停車中でも再検索を許す。
+var ALLFAIL_GRACE_MS = 4000;    // 失敗直後に張り直す開始グレース(通常 START_REROUTE_GRACE_MS)
+var ALLFAIL_RETRY_MS = 8000;    // 失敗後、最低移動80m未満(停車中)でも再検索を許す経過時間
 var REJOIN_AHEAD_MIN_M = 300;   // 元ルートへ合流させる最短先送り距離
 var REJOIN_AHEAD_MAX_M = 1000;  // 同 最大
 var MAJOR_OFFROUTE_MULT = 6;    // これ以上離れたら大きなズレ→目的地まで全再計算
@@ -2067,6 +2073,10 @@ function _tnlSayPre(t,s,src){
     var b=_tnlBranchAfter(_tOut,TNL_BRANCH_M),tail='';
     if(b){var ph=_tnlBranchPhrase(b.step);if(ph)tail='その先、'+ph.full;}
     if(tail)msg+=tail;
+    // ★v40(問題2): 「その先、〇〇出口です。」まで言い切った分岐は、GPS復帰時の
+    //   言い直し(_tnlResayOnResume)の対象から外す＝同じ出口を2回言わない。
+    //   9/2実走: 06:45:35 tnl-pre(tail=その先、海南IC出口です) → 06:47:01 tnl-resay で重複。
+    try{ if(tail&&b){ if(!STATE._tnlPreBr||STATE._tnlPreBrGen!==STATE._routeGen){STATE._tnlPreBr={};STATE._tnlPreBrGen=STATE._routeGen;} STATE._tnlPreBr[b.k]=1; } }catch(_pbe){}
     try{_navLog('tnl-pre',{len:Math.round(_tLen),d:Math.round(_tIn-s),tail:tail.slice(0,24),step:STATE.stepIdx,src:src||'fix',pi:_pi,pn:(_pl?_pl.length:1)});}catch(_e){}
     speakTTSWithChime(msg);
     return true;
@@ -2175,6 +2185,13 @@ function _tnlResayOnResume(lat,lng){
     if(!STATE.spokenPhase[key])STATE.spokenPhase[key]=new Set();
     var set=STATE.spokenPhase[key];
     if(set.has('exit150')||set.has('50m')||set.has('rampforkSoon'))return; // 既に「まもなく」相当を言っている
+    // ★v40(問題2): トンネル内の予告で同じ分岐を言い切っている場合は発話しない。
+    //   ただしフェーズは消費して、直後に通常の「まもなく、〇〇出口です」が出るのも防ぐ。
+    if(STATE._tnlPreBr&&STATE._tnlPreBrGen===STATE._routeGen&&STATE._tnlPreBr[b.k]){
+      set.add('exit150');set.add('50m');set.add('rampforkSoon');set.add('catchfork');set.add('turnLead');
+      try{_navLog('tnl-resay',{d:Math.round(b.d),step:b.k,skip:'pre'});}catch(_e){}
+      return;
+    }
     set.add('exit150');set.add('50m');set.add('rampforkSoon');set.add('catchfork');set.add('turnLead');
     var msg=(ph.toll||/方面/.test(ph.short))?('まもなく、'+ph.short):('まもなく'+ph.short);
     try{_navLog('tnl-resay',{d:Math.round(b.d),step:b.k,txt:msg.slice(0,24)});}catch(_e){}
@@ -4354,6 +4371,7 @@ function checkOffRoute(currentPos){
     if(!step.path||step.path.length===0){var ds=google.maps.geometry.spherical.computeDistanceBetween(currentPos,step.start_location);if(ds<minDist)minDist=ds;}
   }
   var isOffLine=(minDist>OFF_ROUTE_THRESHOLD_M);
+  try{STATE._offNow=minDist;}catch(_one){} // ★v40(問題1): 看板の抑止に使う（表示専用）
   // ★開始アプローチ(修正4): フレッシュ開始の初回、現在地が青線から APPROACH_ENTER_M 超離れて
   //   いればアプローチ状態に入る（駐車場・敷地内で案内開始したケース）。既に青線に近ければ
   //   通常開始（従来どおり）。armは1回で消費する。
@@ -4954,12 +4972,15 @@ function triggerReroute(currentMinDist){
   // ★4点修正①: 通過即検知(_missedTurnFast)は4秒＋最低移動80mでクールダウンをさらに緩和。
   //   フラグはここで1回消費する（GPSノイズでは方位不一致×2fixが成立しないため誤発火しない）。
   var _missFast=!!STATE._missedTurnFast;STATE._missedTurnFast=false;
+  // ★v40(問題1): 直前の再計算が全滅している間は、クールダウンと最低移動80mを迂回して
+  //   ALLFAIL_RETRY_MS ごとに取り直す（停車したまま旧ルートに固まるのを防ぐ）。
+  var _afRetry=!!(STATE._allFailAt&&(nowT-STATE._allFailAt)>=ALLFAIL_RETRY_MS);
   var _fastOk=((_elapR>=REROUTE_FAST_MS)&&(_movedR>=REROUTE_FAST_MOVE_M)&&!_drRecent)
             ||(_missFast&&(_elapR>=MISS_FAST_MS)&&(_movedR>=REROUTE_MIN_MOVE_M)&&!_drRecent);
-  if(_elapR<REROUTE_COOLDOWN_MS&&!_fastOk){STATE.offRouteCount=0;return;}
-  if(_movedR<REROUTE_MIN_MOVE_M){STATE.offRouteCount=0;return;}
+  if(_elapR<REROUTE_COOLDOWN_MS&&!_fastOk&&!_afRetry){STATE.offRouteCount=0;return;}
+  if(_movedR<REROUTE_MIN_MOVE_M&&!_afRetry){STATE.offRouteCount=0;return;}
   _navLog('reroute-fire',{off:(typeof currentMinDist==='number'?Math.round(currentMinDist):null),step:STATE.stepIdx,fast:!!( _fastOk&&_elapR<REROUTE_COOLDOWN_MS),miss:_missFast,dr:_drRecent});
-  STATE.rerouteInProgress=true;STATE.offRouteCount=0;
+  STATE.rerouteInProgress=true;STATE.offRouteCount=0;STATE._allFailAt=0; // ★v40(問題1): 立て直しの印は消費
   STATE.isReroute=true; // ★リルートフラグ
   STATE._routeGen=(STATE._routeGen||0)+1; // ★③ リルート開始時点で旧ルートの遅延発話予約を即時無効化（再計算待ち時間中の発話を防止）
   STATE._speakSeq++;                       // ★③ 旧ルートの在フライトTTS fetchを破棄
@@ -5072,6 +5093,7 @@ function triggerReroute(currentMinDist){
     // ★改①② 採用処理（成功時共通）
     function _applyRoute(result,routeIndex){
       STATE.rerouteInProgress=false;
+      STATE._allFailAt=0;STATE._offNow=0; // ★v40(問題1): 新ルート確定＝立て直し状態を解除
       STATE._backNear=false;STATE._backNearDist=0; // ★フェーズ0: 文脈は1回のリルート限り（次回 triggerReroute で再評価）
       notice.classList.remove('show');
       try{_navLog('reroute-apply',{idx:(typeof routeIndex==='number'?routeIndex:0),cand:((result&&result.routes)?result.routes.length:0),back:!!STATE._rerouteBackward});}catch(_lg){}
@@ -5094,6 +5116,12 @@ function triggerReroute(currentMinDist){
       _navLog('reroute-allfail',null);
       speakTTS('ルートの再計算に失敗しました。');STATE.navActive=true;
       if(STATE.currentDestGeo){startGpsTracking(STATE.currentMap,STATE.currentDestGeo,STATE.stepIdx);}
+      // ★v40(問題1): startGpsTracking が張り直した開始グレース(25秒)を短縮し、
+      //   停車中でも再検索できる印を立てる（旧ルートのまま固まらないようにする）。
+      try{
+        STATE._allFailAt=Date.now();
+        STATE._navStartTime=Date.now()-Math.max(0,START_REROUTE_GRACE_MS-ALLFAIL_GRACE_MS);
+      }catch(_afe){}
     }
     // ★案B 沈黙リトライループ: 前向き(routeGoesForward)かつ無視した交差点を通らない
     //   (routeAvoidsIgnoredNode)ルートが取れるまで、沈黙のまま FORWARD_RETRY_MS おきに
@@ -7770,6 +7798,7 @@ function _drTick(onNavPos){
 
 function startGpsTracking(map,destGeo,fromStepIdx){
   STATE.navActive=true;STATE.navStarted=true;STATE.navPaused=false;STATE.stepIdx=fromStepIdx;
+  STATE._allFailAt=0;STATE._offNow=0; // ★v40: 前回トリップの立て直し状態を持ち越さない（_allFailed はこの後に立て直す）
   _snapHoldOff('route'); // ★v34(②): 新しい青線が出た＝吸着を戻す
   STATE._routeGen=(STATE._routeGen||0)+1; // ★⑨ 新ルート適用＝世代更新。旧世代の予約発話はここで全て無効になる
   try{if(!STATE.isReroute){_uwReset();_XS.exitName='';}}catch(_uwr){} // ★v39: 新しいトリップならＵターン警告と出口状態をリセット
@@ -8129,6 +8158,16 @@ function startGpsTracking(map,destGeo,fromStepIdx){
             }
           }
         }catch(_deb){}
+        // ★v40(問題3-c): DR(仮想)中でも「有料出口の看板」だけは仮想位置で出す。
+        //   9/2の海南は 2km/1km/500m の帯が丸ごとトンネル内で、GPS復帰が出口36m手前
+        //   だったため緑の出口看板が一度も出なかった。発話は従来どおりDR中は出さない。
+        if(XS_DR_EXIT){try{
+          var _dxNext=STATE.routeSteps[STATE.stepIdx];
+          var _dxLook=(STATE.stepIdx+1<STATE.routeSteps.length)?STATE.routeSteps[STATE.stepIdx+1]:null;
+          if(_dxNext&&_dxNext.end_location&&_dxLook&&_xsIsTollExit(_dxLook)){
+            _xsTick(google.maps.geometry.spherical.computeDistanceBetween(cur,_dxNext.end_location),_dxLook,false,true);
+          }
+        }catch(_dxe){}}
         // ★v36(4): 「〇〇キロ以上道なりです」はDR(仮想)中でも言う。位置に依存する一度きりの
         //   案内で先走りの害が無く、8/30のように長いトンネルの中が本来の発話位置になるため。
         try{_straightSayTick(cur,true);}catch(_dst){}
@@ -8602,6 +8641,13 @@ function startGpsTracking(map,destGeo,fromStepIdx){
           var _xsHou=_forkHoumen(nextStep);
           var _xsEnd=nextStep.end_location;
           var _xsKey=(_getExitName(nextStep)||'?')+'@'+(_xsEnd?(_xsEnd.lat().toFixed(3)+','+_xsEnd.lng().toFixed(3)):('s'+STATE.stepIdx));
+          // ★v40(問題3-b): 「まもなく、〇〇方面です」の相手＝料金所を過ぎた次のステップは
+          //   本文が「右折する」だけで交差点名も方面名も取れず、看板が空になっていた
+          //   （9/2帰り 18:34:36 xsign nm:""）。方面名は出口ステップにしか無いので引き継ぐ。
+          try{
+            var _xsNx=(STATE.stepIdx+1<STATE.routeSteps.length)?STATE.routeSteps[STATE.stepIdx+1]:null;
+            if(_xsHou&&_xsNx&&!_xsNx._xsHou&&!_forkHoumen(_xsNx))_xsNx._xsHou=_xsHou;
+          }catch(_xnh){}
           if(_xsHou&&!STATE._exitSaid[_xsKey]){
             STATE._exitSaid[_xsKey]=1;
             try{_navLog('exitsay',{hou:_xsHou,step:STATE.stepIdx,d:Math.round(distToNext),instr:stripHtml(nextStep.instructions||'').slice(0,40),mnv:nextStep.maneuver||'',scan:_exitScanBends(nextStep)});}catch(_xse){}
@@ -9897,6 +9943,8 @@ var _XS={shown:false,key:'',deg:null,name:'',holdUntil:0,at:0,opt:null,hideM:150
 var XS_EXIT_SHOW_M = 520;    // 出口看板を連続表示し始める距離(m)
 var XS_EXIT_HIDE_M = 620;    // 出口看板のヒステリシス（これを超えたら消す）
 var XS_BAND_TAIL_MS = 1500;  // 発話帯の看板を読み終わってから残す時間(ms)
+var XS_DR_EXIT     = true;   // ★v40(問題3-c): DR(仮想)中も有料出口の看板を出す（false でv39動作）
+var XS_OFF_HIDE_M  = 70;     // ★v40(問題1): 青線からこれ以上外れている間は看板を出さない(m)
 // 路線名の短縮（機械変換で足りないものだけ個別登録）
 var XS_ROAD_FIX={'近畿自動車道紀勢線':'紀勢道','近畿自動車道名古屋関線':'東名阪道','第二神明道路':'第二神明','西名阪自動車道':'西名阪道','東名高速道路':'東名','名神高速道路':'名神'};
 function _xsShortRoad(n){
@@ -9939,6 +9987,27 @@ function _xsGreenStep(step){
     return false;
   }catch(e){return false;}
 }
+// ★v40(問題3-a): 出口ステップの本文に「有料区間」が付かないことがある。
+//   9/2実走の海南IC出口＝「海南IC 出口から 国道42号 に入り 海南 方面に向かって進む」には
+//   付いておらず、_xsTollStep が false → 出口看板が緑「海南IC出口」ではなく
+//   青「海南方面」で1枚だけ出ていた（帰りの有田IC出口は本文に「有料区間」があり緑で正常）。
+//   直前のステップ（＝走ってきた本線・ランプ）が有料区間なら、この出口も有料出口とみなす。
+function _xsExitFromToll(step){
+  try{
+    if(!step)return false;
+    var st=STATE.routeSteps||[];var i=st.indexOf(step);
+    if(i<=0)return false;
+    for(var k=i-1;k>=0&&k>=i-2;k--){
+      if(!st[k])break;
+      if(_xsTollStep(st[k]))return true;
+      if(!st[k]._tollSpan)break;
+    }
+    return false;
+  }catch(e){return false;}
+}
+function _xsIsTollExit(step){
+  try{return _xsIsExit(step)&&(_xsTollStep(step)||_xsExitFromToll(step));}catch(e){return false;}
+}
 function _xsIsExit(s){
   if(!s)return false;
   return /出口/.test(_xsInstr(s))||/exit/i.test(s.maneuver||'');
@@ -9978,6 +10047,7 @@ function _xsSpanHoumen(step){
   try{
     var h='';try{h=_forkHoumen(step)||'';}catch(e){h='';}
     if(h)return h;
+    if(step&&step._xsHou)return step._xsHou;   // ★v40(問題3-b): 出口ステップから引き継いだ方面名
     if(!step||!step._tollSpanTarget)return '';
     var st=STATE.routeSteps||[];var i=st.indexOf(step);
     if(i<0)return '';
@@ -9997,7 +10067,7 @@ function _xsBandOf(d,step,C){
   try{
     if(!step||!isFinite(d))return null;
     var g=(STATE._routeGen||0)+':'+STATE.stepIdx+':';
-    if(!!STATE._routeHasToll&&_xsTollStep(step)&&_xsIsExit(step)){
+    if(!!STATE._routeHasToll&&_xsIsTollExit(step)){   // ★v40(問題3-a)
       if(d>C.showM&&d<=XS_EXIT_SHOW_M)return {key:g+'exdown',label:(Math.round(d/10)*10)+'m',hold:true};
       if(d>1850&&d<=2150)return {key:g+'ex2k',label:'2km',hold:false};
       if(d>850&&d<=1150)return {key:g+'ex1k',label:'1km',hold:false};
@@ -10020,7 +10090,7 @@ function _xsPlanOf(d,step,isTurn,isFork,C,farOK){
   var nxt=null;
   try{var _ni=STATE.stepIdx+2;nxt=(_ni<STATE.routeSteps.length)?STATE.routeSteps[_ni]:null;}catch(e){nxt=null;}
   // (1) 有料出口: 500m手前から連続表示（2km/1km は _xsBandOf の発話帯が出す）
-  if(toll&&_xsTollStep(step)&&_xsIsExit(step)){
+  if(toll&&_xsIsTollExit(step)){                      // ★v40(問題3-a)
     if(!farOK&&d>XS_EXIT_SHOW_M)return null;
     _XS.exitName=_xsExitLabel(step);
     return {color:'green',deg:_xsAngleOf(step),name:_XS.exitName,sub:'',hideM:XS_EXIT_HIDE_M};
@@ -10257,6 +10327,13 @@ function _xsTick(d,step,isTurn,isFork){
       return;
     }
     if(_XS.key==='uw'&&_XS.shown)_xsHide();
+    // ★v40(問題1): 青線から大きく外れている間は看板を出さない。9/2実走では再計算が
+    //   全滅した後も旧ルートの案内が続き、既に通過した「土生」の看板が off:206m のまま
+    //   出ていた（＝「次の交差点が出ない」の正体）。Ｕターン警告(赤)より後に置く。
+    if(STATE.rerouteInProgress||(typeof STATE._offNow==='number'&&STATE._offNow>XS_OFF_HIDE_M)){
+      if(_XS.shown)_xsHide();
+      return;
+    }
     // ★v39e: 距離帯の看板。700m/300m/2km/1km は発話している間だけ、
     //   有料出口の500m〜まもなくは出しっぱなしで10m刻みにカウントダウンする。
     var B=null;try{B=_xsBandOf(d,step,C);}catch(_be){B=null;}
