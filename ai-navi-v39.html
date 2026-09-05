@@ -985,6 +985,10 @@ var OFF_ROUTE_THRESHOLD_M = 45;
 var OFF_ROUTE_CONFIRM_COUNT = 2; // ★試行: 3→2。逸脱2回連続でリルート（提示を早める／GPSノイズ耐性はクールダウン等で担保）
 // ★① 開始直後のリルート抑止（開始時のGPSスナップずれによる連呼防止）
 var START_REROUTE_GRACE_MS = 25000;
+// ★v41(9/3要望): 「まもなく〇方向です」の発話位置。交差点名も方面名も取れない分岐は
+//   一般道の低速路が多く、110m手前だと早すぎる＝40m進んだ 70m 手前で言う。
+var SOON_SAY_M        = 110;  // 交差点名 or 方面名がある場合（従来どおり）
+var SOON_SAY_NONAME_M = 70;   // 名前が何も取れない場合
 // ★開始アプローチ(修正4): 案内開始時、現在地がルート青線から APPROACH_ENTER_M 超離れている場合は
 //   「開始前アプローチ状態」とみなす。駐車場や敷地内で案内開始した典型シーン。
 //   この間は開始発話（「ルート案内を開始します…」）を完全発話した後、リルートも距離帯案内も全て無言。
@@ -5093,7 +5097,7 @@ function triggerReroute(currentMinDist){
     // ★改①② 採用処理（成功時共通）
     function _applyRoute(result,routeIndex){
       STATE.rerouteInProgress=false;
-      STATE._allFailAt=0;STATE._offNow=0; // ★v40(問題1): 新ルート確定＝立て直し状態を解除
+      STATE._allFailAt=0;STATE._offNow=0;STATE._xsSoonSign=null; // ★v40(問題1)/v41: 立て直し状態と同時看板を解除
       STATE._backNear=false;STATE._backNearDist=0; // ★フェーズ0: 文脈は1回のリルート限り（次回 triggerReroute で再評価）
       notice.classList.remove('show');
       try{_navLog('reroute-apply',{idx:(typeof routeIndex==='number'?routeIndex:0),cand:((result&&result.routes)?result.routes.length:0),back:!!STATE._rerouteBackward});}catch(_lg){}
@@ -7798,7 +7802,7 @@ function _drTick(onNavPos){
 
 function startGpsTracking(map,destGeo,fromStepIdx){
   STATE.navActive=true;STATE.navStarted=true;STATE.navPaused=false;STATE.stepIdx=fromStepIdx;
-  STATE._allFailAt=0;STATE._offNow=0; // ★v40: 前回トリップの立て直し状態を持ち越さない（_allFailed はこの後に立て直す）
+  STATE._allFailAt=0;STATE._offNow=0;STATE._xsSoonSign=null; // ★v40/v41: 前回トリップの状態を持ち越さない（_allFailed はこの後に立て直す）
   _snapHoldOff('route'); // ★v34(②): 新しい青線が出た＝吸着を戻す
   STATE._routeGen=(STATE._routeGen||0)+1; // ★⑨ 新ルート適用＝世代更新。旧世代の予約発話はここで全て無効になる
   try{if(!STATE.isReroute){_uwReset();_XS.exitName='';}}catch(_uwr){} // ★v39: 新しいトリップならＵターン警告と出口状態をリセット
@@ -8526,7 +8530,10 @@ function startGpsTracking(map,destGeo,fromStepIdx){
         // ★ まもなく案内（90mで発話・★⑧10m手前に前倒し）← 次の交差点(lookAhead) ※まもなく以降は名前なし・方向のみ
         // ★修正1: ゲート/再捕捉の対象外（_farOK不問）・直列化待ちなしの即時発話（第3引数true）
         // ★修正3: 次の分岐が300m以内なら「その先〜」をここで連結する
-        if(aheadIsTurn&&!_isTollNodeEff&&!_aheadIsMerge&&distToNext>10&&distToNext<=110&&!ph.has('50m')){
+        // ★v41: 名前が取れない分岐だけ発話位置を 110m→70m へ（看板の表示開始110mは従来どおり）
+        var _soonNamed=!!(aheadTurnName||_hasHoumen||(STATE._houmenSoon&&STATE._houmenSoon[phaseKey]));
+        var _soonSayM=_soonNamed?SOON_SAY_M:SOON_SAY_NONAME_M;
+        if(aheadIsTurn&&!_isTollNodeEff&&!_aheadIsMerge&&distToNext>10&&distToNext<=_soonSayM&&!ph.has('50m')){
           // ★開始ホールド: 開始発話の再生中は割り込まない。フェーズ(ph)を消費せず
           //   保留フラグだけ立て、ホールド解除後の次tickでこのブロックが再発火する。
           if(STATE._startHold){STATE._holdNearPending=true;}
@@ -8662,6 +8669,14 @@ function startGpsTracking(map,destGeo,fromStepIdx){
             if(_xp.m>=80){
               STATE._exitSoonSaid[_xsKey]=1;
               try{_navLog('exitsoon',{hou:_xsHou,step:STATE.stepIdx,prog:Math.round(_xp.m)});}catch(_xse2){}
+              // ★v41(B案): 発話と同時に方面看板を出す。分岐まで1km前後あって距離帯の外なので
+              //   帯では出せない（9/3実走: exitsoon 18:22:46 の看板は700m帯まで34秒出なかった）。
+              //   読み終わってから XS_BAND_TAIL_MS(1.5秒)で消す＝出しっぱなしにはしない。
+              try{
+                var _ssNx=(STATE.stepIdx+1<STATE.routeSteps.length)?STATE.routeSteps[STATE.stepIdx+1]:null;
+                STATE._xsSoonSign={gen:(STATE._routeGen||0),step:STATE.stepIdx,name:_xsHou+'方面',
+                                   deg:(_ssNx?_xsAngleOf(_ssNx):null),at:Date.now(),offAt:0,spoke:0};
+              }catch(_sse){}
               speakTTSWithChime('まもなく、'+_xsHou+'方面です。',null,true);
             }
           }
@@ -9945,6 +9960,7 @@ var XS_EXIT_HIDE_M = 620;    // 出口看板のヒステリシス（これを超
 var XS_BAND_TAIL_MS = 1500;  // 発話帯の看板を読み終わってから残す時間(ms)
 var XS_DR_EXIT     = true;   // ★v40(問題3-c): DR(仮想)中も有料出口の看板を出す（false でv39動作）
 var XS_OFF_HIDE_M  = 70;     // ★v40(問題1): 青線からこれ以上外れている間は看板を出さない(m)
+var XS_SOON_MAX_MS = 20000;  // ★v41: exitsoon同時看板の保険（発話が来なくてもこの時間で消す）
 // 路線名の短縮（機械変換で足りないものだけ個別登録）
 var XS_ROAD_FIX={'近畿自動車道紀勢線':'紀勢道','近畿自動車道名古屋関線':'東名阪道','第二神明道路':'第二神明','西名阪自動車道':'西名阪道','東名高速道路':'東名','名神高速道路':'名神'};
 function _xsShortRoad(n){
@@ -10333,6 +10349,33 @@ function _xsTick(d,step,isTurn,isFork){
     if(STATE.rerouteInProgress||(typeof STATE._offNow==='number'&&STATE._offNow>XS_OFF_HIDE_M)){
       if(_XS.shown)_xsHide();
       return;
+    }
+    // ★v41(B案): exitsoon「まもなく、〇〇方面です。」と同時に出す方面看板。
+    //   距離帯の外で喋るため帯では出せない。発話している間だけ出し、
+    //   読み終わり＋XS_BAND_TAIL_MS(1.5秒)で消す。距離帯より優先。
+    var SS=STATE._xsSoonSign;
+    if(SS){
+      if(SS.gen!==(STATE._routeGen||0)||SS.step!==STATE.stepIdx||(now-SS.at)>XS_SOON_MAX_MS){
+        STATE._xsSoonSign=null;
+        if(_XS.key==='soon'&&_XS.shown)_xsHide();
+      }else{
+        var _ssSpk=!!STATE._speaking&&(now-(STATE._speakingAt||0)<12000);
+        if(_ssSpk){SS.spoke=1;SS.offAt=0;}
+        else if(SS.spoke){ if(!SS.offAt)SS.offAt=now+XS_BAND_TAIL_MS; }
+        if(SS.offAt&&now>=SS.offAt){
+          STATE._xsSoonSign=null;
+          if(_XS.key==='soon'&&_XS.shown)_xsHide();
+        }else{
+          if(!(_XS.shown&&_XS.key==='soon')){
+            if(_XS.shown)_xsHide();
+            _XS.key='soon';_XS.deg=SS.deg;_XS.name=SS.name;_XS.hideM=Infinity;_XS.holdUntil=0;
+            _xsUpdate(SS.deg,SS.name,{color:'blue',sub:'',hideM:Infinity});
+            try{_navLog('xsign',{step:STATE.stepIdx,deg:((SS.deg===null||SS.deg===undefined)?null:Math.round(SS.deg)),d:Math.round(d),nm:SS.name,c:'blue',band:'exitsoon'});}catch(_sl){}
+          }
+          _XS.at=now;
+          return;
+        }
+      }
     }
     // ★v39e: 距離帯の看板。700m/300m/2km/1km は発話している間だけ、
     //   有料出口の500m〜まもなくは出しっぱなしで10m刻みにカウントダウンする。
