@@ -9961,6 +9961,11 @@ var XS_BAND_TAIL_MS = 1500;  // 発話帯の看板を読み終わってから残
 var XS_DR_EXIT     = true;   // ★v40(問題3-c): DR(仮想)中も有料出口の看板を出す（false でv39動作）
 var XS_OFF_HIDE_M  = 70;     // ★v40(問題1): 青線からこれ以上外れている間は看板を出さない(m)
 var XS_SOON_MAX_MS = 20000;  // ★v41: exitsoon同時看板の保険（発話が来なくてもこの時間で消す）
+// ★v42(9/4要望): 実測位(GPS)が来ていない間は看板を次の交差点へ切り替えない。
+//   9/4実走: 17:03:17〜17:03:36 は headsrc が全て hold/ga:0＝実fixゼロ。その推定位置のまま
+//   ステップが1へ進み、右折を終える前に左の看板へ変わっていた。実fixは17:03:37が最初。
+var XS_NOFIX_MS      = 3000;   // これ以上実fixが無ければ「GPS未取得」とみなす(ms)
+var XS_NOFIX_KEEP_MS = 20000;  // 未取得中に前の看板を出したまま維持する上限(ms)
 // 路線名の短縮（機械変換で足りないものだけ個別登録）
 var XS_ROAD_FIX={'近畿自動車道紀勢線':'紀勢道','近畿自動車道名古屋関線':'東名阪道','第二神明道路':'第二神明','西名阪自動車道':'西名阪道','東名高速道路':'東名','名神高速道路':'名神'};
 function _xsShortRoad(n){
@@ -10129,9 +10134,13 @@ function _xsPlanOf(d,step,isTurn,isFork,C,farOK){
   if(/roundabout|merge|ferry/.test(step.maneuver||''))return null;
   var hou=_xsSpanHoumen(step);   // ★v39e: 区間内は出口ステップの方面名も引き継ぐ
   if(!(isTurn||isFork||hou))return null;
-  if(!farOK&&d>C.showM)return null;
-  var deg=_xsAngleOf(step);
+  // ★v42(9/4要望): 交差点名も方面名も取れない看板は「まもなく」の発話と同時に出す。
+  //   v41で発話だけ110m→70mに遅らせたため、看板が40m先行して出ていた
+  //   （9/4実走 17:03:28 xsign d:109 → 発話は70m地点／低速だと30秒近い先行）。
   var rawNm=_xsNameOf(step);
+  var _xsShowM=(hou||_xsBaseName(rawNm))?C.showM:Math.min(C.showM,SOON_SAY_NONAME_M);
+  if(!farOK&&d>_xsShowM)return null;
+  var deg=_xsAngleOf(step);
   var isCross=_xsIsCrossName(rawNm);
   var nm=_xsBaseName(rawNm);
   // ★v39d: 方面名は「名前が取れないとき」の保険ではなく、交差点名でない（＝道路名しか無い）
@@ -10379,6 +10388,16 @@ function _xsTick(d,step,isTurn,isFork){
     }
     // ★v39e: 距離帯の看板。700m/300m/2km/1km は発話している間だけ、
     //   有料出口の500m〜まもなくは出しっぱなしで10m刻みにカウントダウンする。
+    // ★v42: 実fixが来ていない間は「別の看板へ切り替えない」（今出ている物は維持）。
+    //   出ていない時に新規で出すのは従来どおり許す（出発直後の1枚目を消さないため）。
+    var _fixAge=now-(STATE._lastFixTime||0);
+    var _xsKeepNoFix=function(newKey){
+      if(_fixAge<=XS_NOFIX_MS)return false;      // 実fixあり＝通常動作
+      if(!_XS.shown||_XS.key===newKey)return false; // 何も出ていない／同じ看板の更新は通す
+      if(_fixAge>XS_NOFIX_KEEP_MS)return false;  // 維持しすぎない（以降は通常動作＝保険で消える）
+      _XS.at=now;                                 // 維持中は消灯タイマーを止める
+      return true;
+    };
     var B=null;try{B=_xsBandOf(d,step,C);}catch(_be){B=null;}
     if(B){
       var speaking=!!STATE._speaking&&(now-(STATE._speakingAt||0)<12000);
@@ -10395,6 +10414,7 @@ function _xsTick(d,step,isTurn,isFork){
         PB.sub=B.label;PB.en=false;PB.dist=true;PB.hideM=Infinity;   // ★v39h: 距離行は大きく
         var bkey='band:'+B.key;
         var same=(_XS.shown&&_XS.key===bkey);
+        if(!same&&_xsKeepNoFix(bkey))return;   // ★v42: GPS未取得中は切り替えない
         if(!same||_XS.name!==PB.name||!_XS.opt||_XS.opt.sub!==B.label){
           if(_XS.shown&&!same)_xsHide();
           _XS.key=bkey;_XS.deg=PB.deg;_XS.name=PB.name;_XS.hideM=Infinity;_XS.holdUntil=0;
@@ -10414,6 +10434,7 @@ function _xsTick(d,step,isTurn,isFork){
       return;
     }
     if(_XS.shown&&now<_XS.holdUntil){_XS.at=now;return;} // 通過直後は次の看板に切り替えない
+    if(_xsKeepNoFix(key))return;                         // ★v42: GPS未取得中は切り替えない
     if(_XS.shown)_xsHide();
     var P=null;try{P=_xsPlanOf(d,step,isTurn,isFork,C);}catch(_pe){P=null;}
     if(!P)return;
