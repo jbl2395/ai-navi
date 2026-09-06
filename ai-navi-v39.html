@@ -1026,6 +1026,58 @@ var APSIDE_TRAIL_MIN_M   = 8;    // 直近ベクトルの最短基線長
 var APSIDE_TRAIL_MAX_MS  = 12000;// トレイルの有効期間。これより古い点は捨てる（駐車前の向きを拾わない）
 var APSIDE_AWAY_DEG      = 90;   // ★v28 直近ベクトルが「現在地→青線の始点」からこの角度以上ひらいていたら遠ざかっている＝発話しない
 var APSIDE_HOLD_MAX_MS   = 15000;// ★v28 保険: 動き出してからこの時間で判定できなければ諦め、従来の開始発話を解放する
+// ★v43(9/5要望): 出発時の左右案内を「停車中でも」出す。停車中はGPS方位が取れないので
+//   判定専用のコンパスを一時的に起動する。地図の回転には一切使わない（車載の磁気で
+//   地図が傾く問題を再発させないため）。取れなければ黙って従来動作（動き出してから判定）。
+var APSIDE_CP_ENABLE = true;
+var APSIDE_CP_MAX_MS = 30000;  // 案内開始からこの時間で判定用コンパスを自動解除する
+function _apCpStart(){
+  try{
+    if(!APSIDE_CP_ENABLE||STATE._apCpListener)return;
+    STATE._apCompassH=null;
+    var h=function(e){
+      try{
+        var sa=0;
+        if(window.screen&&window.screen.orientation&&typeof window.screen.orientation.angle==='number')sa=window.screen.orientation.angle;
+        else if(typeof window.orientation==='number')sa=((360-window.orientation)%360+360)%360;
+        var cp=null;
+        if(e.webkitCompassHeading!==undefined&&e.webkitCompassHeading!==null)cp=(e.webkitCompassHeading+sa+720)%360;
+        else if(e.alpha!==null&&e.alpha!==undefined)cp=(360-e.alpha+sa+720)%360;
+        if(cp===null)return;
+        var dcl=0;try{dcl=(loadSt().declination!==undefined)?loadSt().declination:0;}catch(_d){}
+        STATE._apCompassH=(cp+dcl+DECL_CALIBRATION+720)%360;
+      }catch(_e){}
+    };
+    STATE._apCpListener=h;
+    window.addEventListener('deviceorientation',h,true);
+    setTimeout(_apCpStop,APSIDE_CP_MAX_MS);
+  }catch(e){}
+}
+function _apCpStop(){
+  try{
+    if(!STATE._apCpListener)return;
+    window.removeEventListener('deviceorientation',STATE._apCpListener,true);
+    STATE._apCpListener=null;
+    _navLog('apside-cp',{h:(STATE._apCompassH==null?-1:Math.round(STATE._apCompassH))});
+  }catch(e){}
+}
+// ★v43: 曲がる向きを本文から拾う（_apSideTick は案内ブロックの getTurnDir を呼べないため）
+function _apDirOf(step){
+  try{
+    var m=(step&&step.maneuver)||'';
+    if(/uturn/.test(m))return '';
+    if(/right/.test(m))return '右方向';
+    if(/left/.test(m))return '左方向';
+    var si=stripHtml((step&&step.instructions)||'');
+    if(/右折|右方向/.test(si))return '右方向';
+    if(/左折|左方向/.test(si))return '左方向';
+    if(typeof step._geomAngle==='number'&&!isNaN(step._geomAngle)){
+      if(step._geomAngle>=25)return '右方向';
+      if(step._geomAngle<=-25)return '左方向';
+    }
+  }catch(e){}
+  return '';
+}
 // ★v27: 青線の始点と、そこから APSIDE_ROUTE_BASE_M 先へ向かうルートの向きを返す。
 //   戻り値 {sp:始点LatLng, h:ルートの向き, b:実際に使った基線長m} / 出せなければ null。読むだけ。
 function _apSideStartInfo(baseM){
@@ -1101,30 +1153,48 @@ function _apSideTick(cur,spdKmh){
     if(!info)return;
     var d=google.maps.geometry.spherical.computeDistanceBetween(cur,info.sp);
     if(d>APSIDE_TRIGGER_M)return;                       // まだ青線の始点から遠い
-    if(!(spdKmh>=APSIDE_MIN_SPD_KMH))return;            // 停車中〜徐行。向きが取れないので待つ
-    if(!STATE._apSideHoldFrom)STATE._apSideHoldFrom=now; // ★v28 保険タイマーの起点（動き出した時刻）
+    // ★v43: 停車中は判定用コンパスの方位で判定する（従来は動き出すまで待っていた）。
+    var _stopped=!(spdKmh>=APSIDE_MIN_SPD_KMH);
+    if(!_stopped&&!STATE._apSideHoldFrom)STATE._apSideHoldFrom=now; // ★v28 保険タイマーの起点（動き出した時刻）
     if(STATE._startAnnounceDone===false)return;         // 開始発話を切らない。言い切ってから
-    var tv=_apSideTrailHeading(APSIDE_TRAIL_MIN_M);
+    var tv=_stopped?null:_apSideTrailHeading(APSIDE_TRAIL_MIN_M);
     var vh=tv?tv.h:null;
-    if(vh===null&&STATE._headValid&&STATE.gpsHeadingActive)vh=STATE.currentHeading; // 保険: GPS方位
-    if(vh===null||vh===undefined){_navLog('apside-wait',{d:Math.round(d),spd:Math.round(spdKmh),tn:tl.length});return;}
+    if(vh===null&&!_stopped&&STATE._headValid&&STATE.gpsHeadingActive)vh=STATE.currentHeading; // 保険: GPS方位
+    var _cpUsed=false;
+    if((vh===null||vh===undefined)&&_stopped&&APSIDE_CP_ENABLE&&STATE._apCompassH!==null&&STATE._apCompassH!==undefined){
+      vh=STATE._apCompassH;_cpUsed=true;                // 停車中＝コンパス
+    }
+    // 停車中で方位が取れないときは黙って待つ（従来どおり動き出してから判定する）
+    if(vh===null||vh===undefined){if(!_stopped)_navLog('apside-wait',{d:Math.round(d),spd:Math.round(spdKmh),tn:tl.length});return;}
     // ★v28: 青線の始点に「近づいているベクトル」の時だけ喋る。少しでも離れていく向きなら見送る
     //   （消費しない＝駐車場内で向きを変えて近づき直したら、その時に判定する）。
     var toSp=google.maps.geometry.spherical.computeHeading(cur,info.sp);
     var away=Math.abs(((toSp-vh+540)%360)-180);
-    if(away>=APSIDE_AWAY_DEG){
+    if(!_cpUsed&&away>=APSIDE_AWAY_DEG){   // ★v43: 停車中(コンパス)は移動ベクトルが無いので離れ判定はしない
       _navLog('apside-away',{d:Math.round(d),vh:Math.round(vh),to:Math.round(toSp),aw:Math.round(away),spd:Math.round(spdKmh)});
       return;
     }
     var df=((info.h-vh+540)%360)-180;                   // ＋なら青線は右へ、−なら左へ
     STATE._apSideArmed=false;                           // 判定したら1回で消費（黙る場合も消費）
     var say=(Math.abs(df)<APSIDE_DEAD_DEG)?'':(df>0?'右方向です':'左方向です');
+    // ★v43: 「右方向です。その先、左方向です。」まで一息で言い、従来の距離形の開始発話
+    //   （「およそ120m先、左方向です」）は出さない。合図＋次の分岐だけの素直な形にする。
+    var _apNx=null,_apNd='';
+    try{_apNx=(STATE.stepIdx+1<STATE.routeSteps.length)?STATE.routeSteps[STATE.stepIdx+1]:null;_apNd=_apDirOf(_apNx);}catch(_ae){}
+    var _apMsg=say?(say+(_apNd?'。その先、'+_apNd+'です':'')):'';
     _navLog('apside',{d:Math.round(d),vh:Math.round(vh),rh:Math.round(info.h),df:Math.round(df),
-      aw:Math.round(away),tb:tv?Math.round(tv.d):-1,rb:Math.round(info.b),spd:Math.round(spdKmh),say:say||'(無言)'});
+      aw:Math.round(away),tb:tv?Math.round(tv.d):-1,rb:Math.round(info.b),spd:Math.round(spdKmh),
+      cp:_cpUsed?1:0,nx:_apNd||'',say:_apMsg||'(無言)'});
+    try{_apCpStop();}catch(_ac){}
     // ★v28: 先にこの左右案内を言い切ってから、従来の開始発話（「〇〇m先、〇〇を右方向です」）を出す。
     if(say){
+      // 合図と同時に矢印だけの看板を出す（読み終わり＋1.5秒で消える）
+      try{_xsSaySign('',Math.max(-135,Math.min(135,df)),'blue','',false);}catch(_as){}
+      if(_apNd){ // 次の分岐まで言い切ったので、従来の開始発話は消費済みにする
+        STATE._apSideSaidNext=true;STATE._startMoveSpoken=true;STATE._startSpokenMsg=null;STATE._startAnnounceDone=true;
+      }
       STATE._apSideSpeaking=true;
-      speakTTSOnly(say,function(){STATE._apSideSpeaking=false;_navLog('apside-done',{});});
+      speakTTSOnly(_apMsg,function(){STATE._apSideSpeaking=false;_navLog('apside-done',{});});
       setTimeout(function(){if(STATE._apSideSpeaking){STATE._apSideSpeaking=false;_navLog('apside-done',{to:1});}},6000); // 保険: コールバックが来なくても解放
     }
   }catch(e){}
@@ -4407,7 +4477,9 @@ function checkOffRoute(currentPos){
       try{
         var _ajStep=(STATE.routeSteps&&STATE.stepIdx<STATE.routeSteps.length)?STATE.routeSteps[STATE.stepIdx]:null;
         var _ajD=(_ajStep&&_ajStep.end_location)?google.maps.geometry.spherical.computeDistanceBetween(currentPos,_ajStep.end_location):Infinity;
-        if(_ajD<APPROACH_SAY_MAX_M){
+        if(STATE._apSideSaidNext){   // ★v43: 出発時に「その先、〇方向です」まで言い切っている
+          _navLog('approach-say',{d:Math.round(_ajD),msg:'(出発時に発話済み)'});
+        }else if(_ajD<APPROACH_SAY_MAX_M){
           STATE.originGeoData={lat:currentPos.lat(),lng:currentPos.lng()};
           var _ajMsg=announceFirstTurn(STATE.stepIdx,false,false);
           STATE._startMoveSpoken=true;STATE._startAnnounceDone=true; // 移動検知による二重発話は抑止
@@ -7842,6 +7914,7 @@ function startGpsTracking(map,destGeo,fromStepIdx){
     STATE.isReroute=false;
     STATE._approachMode=false;STATE._approachArmed=false; // ★開始アプローチ: リルートでは使わない
     STATE._apSideArmed=false;STATE._apSideTrail=null;STATE._apSideSpeaking=false;STATE._apSideHoldFrom=0; // ★v27/v28 出発時の左右案内もリルートでは使わない
+    STATE._apSideSaidNext=false;try{_apCpStop();}catch(_ac2){} // ★v43
     STATE._recaptureMode=true;  // ★再捕捉モード開始: 新ルートの最初の案内は前方300m以上限定
     // ★②修正: リルート直後、走行ループの距離案内(enter300/rampfork等はスキップ事前セット対象外)が
     //   1600ms後に予約された最初の交差点案内より先にチャイム付きで発話し、後発が前を切断して
@@ -7872,6 +7945,8 @@ function startGpsTracking(map,destGeo,fromStepIdx){
     STATE._approachMode=false; // 一旦クリア。初回fixで距離を測って必要ならtrueにする
     STATE._approachArmed=(fromStepIdx===0); // 初回fixでのアプローチ判定を予約（フレッシュ開始のみ）
     STATE._apSideArmed=(APSIDE_ENABLE&&fromStepIdx===0); // ★v27 出発時の左右案内を予約（フレッシュ開始のみ・1回だけ）
+    STATE._apSideSaidNext=false;                        // ★v43
+    if(STATE._apSideArmed)_apCpStart();                 // ★v43 判定専用コンパスを起動（30秒で自動解除）
     STATE._apSideTrail=null;                             // ★v27 駐車前の古い向きを拾わないよう専用トレイルを空にする
     STATE._apSideSpeaking=false;STATE._apSideHoldFrom=0;  // ★v28
     STATE._approachStartAt=0;STATE._approachStartPos=null;
@@ -8105,6 +8180,9 @@ function startGpsTracking(map,destGeo,fromStepIdx){
       if(!pos._dr){try{_tnlTick(pos.coords.latitude,pos.coords.longitude);}catch(_tne){}} // ★v30(トンネル): 取得起動＋予告発話
       else{try{_tnlTickDr(pos.coords.latitude,pos.coords.longitude);}catch(_tnd){}}         // ★v32: DR中は仮想位置で予告点を判定
       if(!pos._dr)_apSideTick(cur,(pos.coords.speed||0)*3.6); // ★v27 出発時の左右案内（DR中は実位置でないので通さない）
+      // ★v43: 青線に合流する前(_approachMode)は案内ブロックを通らないので、
+      //   発話同期の一発看板だけはここから描く（出発時の左右案内の矢印用）。
+      if(!pos._dr&&(STATE._xsSoonSign||(_XS.shown&&_XS.key==='soon'))){try{_xsTick(0,null,false,false,true);}catch(_sot){}}
       // ★④ グローバル到着判定: ステップ進行・最終レグ到達に依存せず、
       //   目的地ピンに ARRIVE_GLOBAL_M 以内まで近づいたら到着扱い。
       //   （途中ステップの通過取りこぼしで最終レグに乗れず到着しない問題の保険）
@@ -8621,15 +8699,19 @@ function startGpsTracking(map,destGeo,fromStepIdx){
           var _enDir=getTurnDir(lookAheadStep);
           var _enDirTxt=(_enDir==='右折')?'右方向、':(_enDir==='左折')?'左方向、':'';
           // ★改① 次のインターチェンジ（入口交差点）の1km手前から発話を開始する
-          if(_farOK&&distToNext>750&&distToNext<=1300&&!ph.has('enter1k')){ph.add('enter1k');speakTTSWithChime('およそ1km先、'+_enDirTxt+_enTail);}
-          if(_farOK&&distToNext>350&&distToNext<=750&&!ph.has('enter700')){ph.add('enter700');STATE._enterSpokeAt=Date.now();speakTTSWithChime('およそ700m先、'+_enDirTxt+_enTail+'その先、料金所です。');}
+          // ★v43(9/5要望): 入口の発話のたびに、緑の看板へ「言ったm数」を出す（読み終わり＋1.5秒）。
+          //   入口の enter300 は実測で約245m＝300m帯の窓(250〜350m)の外側で鳴るため、
+          //   帯任せだと看板が点かなかった（9/2 d:241／9/4 d:245）。発話と表示を揃える。
+          var _enSign=function(lab){try{_xsSaySign(_xsEntranceLabel(lookAheadStep,secondStep),_xsAngleOf(lookAheadStep),'green',lab,true);}catch(_es){}};
+          if(_farOK&&distToNext>750&&distToNext<=1300&&!ph.has('enter1k')){ph.add('enter1k');_enSign('1km');speakTTSWithChime('およそ1km先、'+_enDirTxt+_enTail);}
+          if(_farOK&&distToNext>350&&distToNext<=750&&!ph.has('enter700')){ph.add('enter700');STATE._enterSpokeAt=Date.now();_enSign('700m');speakTTSWithChime('およそ700m先、'+_enDirTxt+_enTail+'その先、料金所です。');}
           // ★①修正: 手前交差点が近くステップ進行が遅れた場合、300m固定でなく実距離(50m丸め)で発話。
           //   発話時刻を記録し、直後のenterSoonによる末尾「その先、料金所です」の切断を防ぐ。
-          if(_farOK&&distToNext>90&&distToNext<=350&&!ph.has('enter300')){ph.add('enter300');STATE._enterSpokeAt=Date.now();var _enD3=Math.round(distToNext/50)*50;speakTTSWithChime('およそ'+_enD3+'m先、'+_enDirTxt+_enTail+'その先、料金所です。');}
+          if(_farOK&&distToNext>90&&distToNext<=350&&!ph.has('enter300')){ph.add('enter300');STATE._enterSpokeAt=Date.now();var _enD3=Math.round(distToNext/50)*50;_enSign(_enD3+'m');speakTTSWithChime('およそ'+_enD3+'m先、'+_enDirTxt+_enTail+'その先、料金所です。');}
           // ★①修正: 直前の入口案内から6秒以内なら「まもなく」を出さない（発話中の切断防止・内容は重複のため省略可）
           // ★修正1: ゲート対象外・即時発話
           // ★開始ホールド: 開始発話の再生中は割り込まない（ph未消費で次tick再発火）
-          if(distToNext>10&&distToNext<=90&&!ph.has('enterSoon')){if(STATE._startHold){STATE._holdNearPending=true;}else{ph.add('enterSoon');if(!STATE._enterSpokeAt||Date.now()-STATE._enterSpokeAt>6000){_nearAnnouncePreempt();speakTTSWithChime('まもなく'+_enDirTxt+_enTail,null,true);}}}
+          if(distToNext>10&&distToNext<=90&&!ph.has('enterSoon')){if(STATE._startHold){STATE._holdNearPending=true;}else{ph.add('enterSoon');if(!STATE._enterSpokeAt||Date.now()-STATE._enterSpokeAt>6000){_nearAnnouncePreempt();_enSign('まもなく');speakTTSWithChime('まもなく'+_enDirTxt+_enTail,null,true);}}}
         }
         // ★EXITSAY(v14): 出口ランプに乗った瞬間に「この先、〇〇方面です。」を1回だけ発話する。
         //   nextStep = STATE.routeSteps[STATE.stepIdx] は「今走っているステップ」なので、
@@ -8674,8 +8756,7 @@ function startGpsTracking(map,destGeo,fromStepIdx){
               //   読み終わってから XS_BAND_TAIL_MS(1.5秒)で消す＝出しっぱなしにはしない。
               try{
                 var _ssNx=(STATE.stepIdx+1<STATE.routeSteps.length)?STATE.routeSteps[STATE.stepIdx+1]:null;
-                STATE._xsSoonSign={gen:(STATE._routeGen||0),step:STATE.stepIdx,name:_xsHou+'方面',
-                                   deg:(_ssNx?_xsAngleOf(_ssNx):null),at:Date.now(),offAt:0,spoke:0};
+                _xsSaySign(_xsHou+'方面',(_ssNx?_xsAngleOf(_ssNx):null),'blue','',false);
               }catch(_sse){}
               speakTTSWithChime('まもなく、'+_xsHou+'方面です。',null,true);
             }
@@ -9964,6 +10045,15 @@ var XS_SOON_MAX_MS = 20000;  // ★v41: exitsoon同時看板の保険（発話�
 // ★v42(9/4要望): 実測位(GPS)が来ていない間は看板を次の交差点へ切り替えない。
 //   9/4実走: 17:03:17〜17:03:36 は headsrc が全て hold/ga:0＝実fixゼロ。その推定位置のまま
 //   ステップが1へ進み、右折を終える前に左の看板へ変わっていた。実fixは17:03:37が最初。
+// ★v43: 発話と同時に出す一発看板（読み終わり＋XS_BAND_TAIL_MS で消える）を1か所で作る。
+//   exitsoon / 有料入口の距離発話 / 出発時の左右案内 で共用する。
+function _xsSaySign(name,deg,color,sub,dist){
+  try{
+    STATE._xsSoonSign={gen:(STATE._routeGen||0),step:STATE.stepIdx,name:(name||''),
+      deg:((deg===null||deg===undefined)?null:deg),color:(color||'blue'),sub:(sub||''),dist:!!dist,
+      at:Date.now(),offAt:0,spoke:0};
+  }catch(e){}
+}
 var XS_NOFIX_MS      = 3000;   // これ以上実fixが無ければ「GPS未取得」とみなす(ms)
 var XS_NOFIX_KEEP_MS = 20000;  // 未取得中に前の看板を出したまま維持する上限(ms)
 // 路線名の短縮（機械変換で足りないものだけ個別登録）
@@ -10336,7 +10426,7 @@ function _xsHide(){
   _XS.shown=false;_XS.key='';_XS.deg=null;_XS.holdUntil=0;_XS.opt=null; // ★v39
 }
 // 案内ループから毎fix呼ぶ。d=次の交差点までの距離、step=その交差点のステップ(stepIdx+1)
-function _xsTick(d,step,isTurn,isFork){
+function _xsTick(d,step,isTurn,isFork,sayOnly){
   try{
     var C=_xsCfg();
     if(!C.on){if(_XS.shown)_xsHide();return;}
@@ -10362,6 +10452,8 @@ function _xsTick(d,step,isTurn,isFork){
     // ★v41(B案): exitsoon「まもなく、〇〇方面です。」と同時に出す方面看板。
     //   距離帯の外で喋るため帯では出せない。発話している間だけ出し、
     //   読み終わり＋XS_BAND_TAIL_MS(1.5秒)で消す。距離帯より優先。
+    // ★v43: sayOnly＝発話同期の一発看板だけを描く呼び出し（アプローチ中でも出せるように）
+    if(sayOnly&&!STATE._xsSoonSign&&!(_XS.shown&&_XS.key==='soon'))return;
     var SS=STATE._xsSoonSign;
     if(SS){
       if(SS.gen!==(STATE._routeGen||0)||SS.step!==STATE.stepIdx||(now-SS.at)>XS_SOON_MAX_MS){
@@ -10378,14 +10470,15 @@ function _xsTick(d,step,isTurn,isFork){
           if(!(_XS.shown&&_XS.key==='soon')){
             if(_XS.shown)_xsHide();
             _XS.key='soon';_XS.deg=SS.deg;_XS.name=SS.name;_XS.hideM=Infinity;_XS.holdUntil=0;
-            _xsUpdate(SS.deg,SS.name,{color:'blue',sub:'',hideM:Infinity});
-            try{_navLog('xsign',{step:STATE.stepIdx,deg:((SS.deg===null||SS.deg===undefined)?null:Math.round(SS.deg)),d:Math.round(d),nm:SS.name,c:'blue',band:'exitsoon'});}catch(_sl){}
+            _xsUpdate(SS.deg,SS.name,{color:(SS.color||'blue'),sub:(SS.sub||''),dist:!!SS.dist,en:false,hideM:Infinity});
+            try{_navLog('xsign',{step:STATE.stepIdx,deg:((SS.deg===null||SS.deg===undefined)?null:Math.round(SS.deg)),d:Math.round(d),nm:SS.name,c:(SS.color||'blue'),band:'say'+(SS.sub?':'+SS.sub:'')});}catch(_sl){}
           }
           _XS.at=now;
           return;
         }
       }
     }
+    if(sayOnly)return;   // ★v43: 一発看板の面倒だけ見て戻る
     // ★v39e: 距離帯の看板。700m/300m/2km/1km は発話している間だけ、
     //   有料出口の500m〜まもなくは出しっぱなしで10m刻みにカウントダウンする。
     // ★v42: 実fixが来ていない間は「別の看板へ切り替えない」（今出ている物は維持）。
