@@ -9188,7 +9188,7 @@ function exitNav(){
   hideCarMarker();document.getElementById('orient-badge').classList.remove('show');
   document.getElementById('nav-mic-btn').classList.remove('show');
   document.body.classList.remove('nav-mode','night-theme','night-map-styled');
-  var _sky=document.getElementById('sky-layer');if(_sky)_sky.classList.remove('daytime','sunrise','sunset','night');
+  var _sky=document.getElementById('sky-layer');if(_sky){_sky.classList.remove('daytime','sunrise','sunset','night');_sky._skyTheme=null;} // ★v46: 次回ナビ開始時に必ず塗り直されるようキャッシュを消す
   document.getElementById('nav-ui').classList.remove('on');document.getElementById('nav-bottom-bar').classList.remove('show');
   document.getElementById('location-notice').classList.remove('show');document.getElementById('toll-notice').classList.remove('show');
   document.getElementById('offroute-notice').classList.remove('show');document.getElementById('ai-bubble').classList.remove('show');
@@ -9378,7 +9378,56 @@ function saveSett(){
   var badge=document.getElementById('api-badge');if(mapsKey){badge.className='api-badge live';badge.textContent='LIVE MODE';}else{badge.className='api-badge demo';badge.textContent='NO API KEY';}
 }
 
-function getSkyTheme(lat,lng){var now=new Date();var h=now.getHours();var m=now.getMinutes();var t=h+m/60;if(t>=5.0&&t<6.5)return'sunrise';if(t>=6.5&&t<17.0)return'daytime';if(t>=17.0&&t<19.0)return'sunset';return'night';}
+// ★v46: 空のテーマを「本物の日の出/日の入り」に合わせる。
+//   これまでは 5:00/6:30/17:00/19:00 の固定時刻だったため、
+//   夏はまだ明るいのに夕焼け、冬はもう真っ暗なのに夕焼け、というズレが出ていた。
+//   NOAAの太陽位置アルゴリズムで緯度経度と日付から計算する（通信もAPIキーも不要・誤差1分以内）。
+var SKY_TWILIGHT_MIN=30; // 薄明の幅（分）。日の出/日の入りの前後これだけを sunrise/sunset にする。
+
+// 指定日の日の出/日の入りを「端末ローカル時刻の 0時からの分」で返す。
+// 白夜/極夜など計算できない場合は null。
+function _sunTimes(lat,lng,date){
+  try{
+    var rad=Math.PI/180,d=date||new Date();
+    var jd=Math.floor(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate())/86400000)+2440587.5;
+    var n=Math.round(jd-2451545.0+0.0008);        // 2000/1/1からの日数
+    var Js=n-lng/360;                             // 平均太陽正午
+    var M=(357.5291+0.98560028*Js)%360;           // 太陽の平均近点角
+    var C=1.9148*Math.sin(M*rad)+0.0200*Math.sin(2*M*rad)+0.0003*Math.sin(3*M*rad); // 中心差
+    var L=(M+C+180+102.9372)%360;                 // 太陽黄経
+    var Jt=2451545.0+Js+0.0053*Math.sin(M*rad)-0.0069*Math.sin(2*L*rad); // 南中のユリウス日
+    var decl=Math.asin(Math.sin(L*rad)*Math.sin(23.4397*rad));           // 太陽赤緯
+    // -0.833° = 大気差＋太陽の視半径（太陽の上辺が地平線に触れる瞬間）
+    var cosW=(Math.sin(-0.833*rad)-Math.sin(lat*rad)*Math.sin(decl))/(Math.cos(lat*rad)*Math.cos(decl));
+    if(!isFinite(cosW)||cosW>1||cosW<-1)return null; // 白夜/極夜
+    var w=Math.acos(cosW)/rad;
+    var toLocalMin=function(J){
+      var dt=new Date((J-2440587.5)*86400000);
+      if(isNaN(dt.getTime()))return null;
+      return dt.getHours()*60+dt.getMinutes()+dt.getSeconds()/60; // 端末のタイムゾーン/夏時間は自動で反映される
+    };
+    var rise=toLocalMin(Jt-w/360),set=toLocalMin(Jt+w/360);
+    if(rise==null||set==null)return null;
+    return {rise:rise,set:set};
+  }catch(e){return null;}
+}
+
+function getSkyTheme(lat,lng){
+  var now=new Date();var t=now.getHours()*60+now.getMinutes();
+  var s=_sunTimes(lat||35.68,lng||139.69,now);
+  if(!s||!(s.set>s.rise)){ // 計算できない時（白夜/極夜など）は従来の固定時刻へフォールバック
+    var h=t/60;
+    if(h>=5.0&&h<6.5)return'sunrise';
+    if(h>=6.5&&h<17.0)return'daytime';
+    if(h>=17.0&&h<19.0)return'sunset';
+    return'night';
+  }
+  var w=SKY_TWILIGHT_MIN;
+  if(t>=s.rise-w&&t<s.rise+w)return'sunrise';
+  if(t>=s.rise+w&&t<s.set-w)return'daytime';
+  if(t>=s.set-w&&t<s.set+w)return'sunset';
+  return'night';
+}
 
 function generateStars(){
   var el=document.getElementById('stars-layer');if(!el||el.childElementCount>0)return;
@@ -9387,12 +9436,38 @@ function generateStars(){
   el.appendChild(frag);
 }
 
+// ★v46: 夜⇔昼が入れ替わった時、地図のスタイル（暗い青系/昼系）も追随させる。
+//   従来はドライバービューに入る瞬間の1回だけ決まっていたため、走行中に日没を跨ぐと地図が昼のままだった。
+function _reapplyMapStyleForSky(){
+  try{
+    var map=STATE.currentMap;if(!map||typeof map.setOptions!=='function')return;
+    if(typeof WALK!=='undefined'&&WALK&&typeof WALK._applyMapStyle==='function')WALK._applyMapStyle(map);
+  }catch(e){}
+}
+
 function applySkyTheme(lat,lng){
   var sky=document.getElementById('sky-layer');if(!sky)return;var theme=getSkyTheme(lat||35.68,lng||139.69);
+  var prev=sky._skyTheme||null;
+  if(prev===theme)return; // ★v46: 変わった時だけ塗り替える（1分ごとに呼ばれるため）
+  sky._skyTheme=theme;
   sky.classList.remove('daytime','sunrise','sunset','night');sky.classList.add(theme);
   if(theme==='night'){document.body.classList.add('night-theme');generateStars();}
   else{document.body.classList.remove('night-theme','night-map-styled');}
+  if(prev&&((prev==='night')!==(theme==='night')))_reapplyMapStyleForSky(); // 初回は zoomToDriverView 側に任せる
 }
+
+// ★v46: 走行中に時間が進んでも空が変わるよう、1分ごとに再判定する。
+//   位置はDRの推定現在地→目的地系データ→東京の順で採用（数百km違っても日の入りは数分しか動かない）。
+function _skyTick(){
+  try{
+    if(!document.body.classList.contains('nav-mode'))return;
+    var p=(STATE&&STATE._drCur)||(STATE&&STATE.currentGeoData)||null;
+    applySkyTheme(p?p.lat:null,p?p.lng:null);
+  }catch(e){}
+}
+setInterval(_skyTick,60000);
+// バックグラウンドではタイマーが間引かれるので、復帰時に必ず1回追いつかせる
+document.addEventListener('visibilitychange',function(){if(!document.hidden)_skyTick();});
 
 // ============================================================
 // ★★★ コンパス ★★★
