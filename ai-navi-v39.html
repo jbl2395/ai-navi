@@ -1490,10 +1490,14 @@ var DR_TICK_MS          = 250;   // 推定走行の更新間隔
 //   長いトンネルほど過走が積み上がる。Googleのステップ(距離÷所要)は区間の平均速度そのものなので
 //   これを重み付きで混ぜ、さらに一律の控えめ係数で「先行」より「わずかに遅れ」側へ倒す。
 //   ※実測では走行速度は入口速度からほぼ落ちていなかったため、時間による減衰カーブは入れない。
-var DR_BLEND_ROUTE     = 0.35; // ルート期待速度(距離÷所要)の混合比
-var DR_CAL_BASE        = 0.97; // 一律の控えめ係数
+// ★v44(9/6): トンネルDRの初速が実速より低く入り、抜けた時のワープが大きい件。
+//   9/6実走: dr-enter spd:73(seed:78/rt:71) に対し実速79 → 298秒で ahead -484m
+//   （平均 DR 84km/h vs 実測 90km/h）。計算は 78×0.65+71×0.35=75.6 → ×0.97 = 73。
+//   過走側は出口クランプが止めるので、控えめ係数を外して実速寄りにする。
+var DR_BLEND_ROUTE     = 0.15; // ルート期待速度(距離÷所要)の混合比 ★v44: 0.35→0.15
+var DR_CAL_BASE        = 1.00; // 一律の控えめ係数 ★v44: 0.97→1.00
 var DR_BLEND_MIN_RATIO = 0.88; // ブレンド結果が入口速度に対して下がりすぎないための下限
-var DR_BLEND_MAX_RATIO = 1.00; // 同・上限。1.00＝DR速度が入口速度を上回ることは無い（必ず97%以下）
+var DR_BLEND_MAX_RATIO = 1.10; // 同・上限 ★v44: 1.00→1.10（入口速度を1割まで上回れる）
 // ★トンネル対策(v5): DR中の進行方位を「残りセグメント(数m)」から「前方先読み」に変更する。
 //   _drAdvanceAlongRoute は現在地→次の頂点の方位を使っていたが、頂点間が数mまで詰まると
 //   ポリラインの量子化(約1.1m)がそのまま角度ノイズになり、地図がわずかに傾く原因になっていた。
@@ -8494,6 +8498,13 @@ function startGpsTracking(map,destGeo,fromStepIdx){
               _ndTxt=(aheadTurnDir==='右折')?'右方向、':(aheadTurnDir==='左折')?'左方向、':'';
               ph.add('300m');
             }
+            // ★v44(9/6): この発話は「目的地までの残り300m」で鳴るが、看板の300m帯は
+            //   「曲がりまでの距離」250〜350mで判定するため窓の外になり点かなかった
+            //   （9/6実走: 発話時の曲がりまでは約200m）。発話に看板を同期させる。
+            try{
+              var _dnP=_xsPlanOf(distToNext,lookAheadStep,aheadIsTurn,(typeof aheadIsFork!=='undefined'?aheadIsFork:false),_xsCfg(),true);
+              if(_dnP)_xsSaySign(_dnP.name,_dnP.deg,_dnP.color,'300m',true);
+            }catch(_dne){}
             speakTTSWithChime('およそ300m先、'+_ndTxt+'目的地周辺です。');
           }
         }
@@ -8537,6 +8548,16 @@ function startGpsTracking(map,destGeo,fromStepIdx){
         if(lookAheadStep&&distToNext<=250&&(aheadIsFork||_hasHoumen||_isTollNode)){
           try{_navLog('tollbranch',{step:STATE.stepIdx,d:Math.round(distToNext),instr:stripHtml(lookAheadStep.instructions||'').slice(0,40),mnv:lookAheadStep.maneuver||'',tollNode:!!_isTollNode,pass:!!_tollPassBranch,pt:!!_postTollTurn,gate:!!_gateBetween,ramp:!!_isRampFork,hou:_rampHoumen||'',sp:!!lookAheadStep._tollSpan,tg:!!lookAheadStep._tollSpanTarget,ph:Array.from(ph)});}catch(_tbe){}
         }
+        // ★v45(9/6要望): 距離つきの案内を喋ったら、その距離を看板にも出す。
+        //   帯(700m/300m)は「窓の中で喋っている間」しか点かないので、チャイム＋TTS取得の
+        //   遅れで _speaking が立つ前に窓を出てしまうと点かない（9/6の白浜方面がこれ）。
+        //   発話と同時に一発看板を出して、読み終わり＋1.5秒で消す。
+        var _saySignFor=function(lab){
+          try{
+            var P=_xsPlanOf(distToNext,lookAheadStep,aheadIsTurn,aheadIsFork,_xsCfg(),true);
+            if(P)_xsSaySign(P.name,P.deg,P.color,lab,true);
+          }catch(_ssf){}
+        };
         // ★TOLLSPAN: 区間の対象分岐（出口通過後の最初の方面名つき分岐）は
         //   「およそ300m先、〇方向、〇〇方面です。」＋「まもなく、…」の2本に固定する。
         //   350mより遠い段階で 700m帯と rampfork帯 を先食いしておき、以降は既存の
@@ -8574,6 +8595,7 @@ function startGpsTracking(map,destGeo,fromStepIdx){
           //   （「その先、本線に合流します」連結前の本文で呼ぶ）
           _setHoumenSoonPlan(_rfMsg,distToNext);
           if(_secondIsMerge)_rfMsg+='その先、本線に合流します。'; // 合流が確認できる時だけ付ける
+          _saySignFor(_rfDist+'m');   // ★v45
           speakTTSWithChime(_rfMsg);
         }
         // ★ およそ700m先案内（750mで発話）← 次の交差点(lookAhead) ※有料出入口は専用発話に任せる
@@ -8587,6 +8609,7 @@ function startGpsTracking(map,destGeo,fromStepIdx){
             msg700+=_dirOrHoumen(aheadTurnDir,aheadIsFork,aheadTurnName); // ★改⑤
           }
           _setHoumenSoonPlan(msg700,distToNext); // ★4点修正-2(問題3): 方面発話ならどの分岐経路でも記録＋まもなくプラン
+          _saySignFor('700m');   // ★v45
           // ★修正3: 「その先〜」連結は700m帯から「まもなく」帯へ移動（遠い位置でのまとめ発話をやめる）
           speakTTSWithChime(msg700);
         }
@@ -8603,6 +8626,7 @@ function startGpsTracking(map,destGeo,fromStepIdx){
             msg300+=_dirOrHoumen(aheadTurnDir,aheadIsFork,aheadTurnName); // ★改⑤
           }
           _setHoumenSoonPlan(msg300,distToNext); // ★4点修正-2(問題3): 方面発話ならどの分岐経路でも記録＋まもなくプラン
+          _saySignFor('300m');   // ★v45
           speakTTSWithChime(msg300);
         }
         // ★ まもなく案内（90mで発話・★⑧10m手前に前倒し）← 次の交差点(lookAhead) ※まもなく以降は名前なし・方向のみ
@@ -8754,10 +8778,10 @@ function startGpsTracking(map,destGeo,fromStepIdx){
               // ★v41(B案): 発話と同時に方面看板を出す。分岐まで1km前後あって距離帯の外なので
               //   帯では出せない（9/3実走: exitsoon 18:22:46 の看板は700m帯まで34秒出なかった）。
               //   読み終わってから XS_BAND_TAIL_MS(1.5秒)で消す＝出しっぱなしにはしない。
-              try{
-                var _ssNx=(STATE.stepIdx+1<STATE.routeSteps.length)?STATE.routeSteps[STATE.stepIdx+1]:null;
-                _xsSaySign(_xsHou+'方面',(_ssNx?_xsAngleOf(_ssNx):null),'blue','',false);
-              }catch(_sse){}
+              // ★v44(9/6): 矢印は出さない＝方面名だけの看板にする。
+              //   方面名は「道路の行き先」で、その場で曲がる向きではない。9/6実走では
+              //   ランプを降りた直後に 1045m先の右折の角度(deg:76)を矢印にしていて逆に見えた。
+              try{_xsSaySign(_xsHou+'方面',null,'blue','',false);}catch(_sse){}
               speakTTSWithChime('まもなく、'+_xsHou+'方面です。',null,true);
             }
           }
@@ -10154,11 +10178,15 @@ function _xsEntranceLabel(s,nxt){
 // ★v39e: 出口通過後の最初の分岐（_tollSpanTarget）は本文が「右折する」だけのことがあり
 //   方面名が取れない。発話側は出口ステップの方面名を使っているので、看板も同じ区間内を
 //   さかのぼって拾い、「有田・金屋方面」を出せるようにする。
-function _xsSpanHoumen(step){
+function _xsSpanHoumen(step,farOK){
   try{
     var h='';try{h=_forkHoumen(step)||'';}catch(e){h='';}
     if(h)return h;
-    if(step&&step._xsHou)return step._xsHou;   // ★v40(問題3-b): 出口ステップから引き継いだ方面名
+    // ★v40(問題3-b): 出口ステップから引き継いだ方面名。
+    // ★v44(9/6): 使うのは距離帯(700m/300m)の看板だけ。「まもなく」の近距離では
+    //   その場の交差点を指す看板になるので、方面名は出さず矢印だけに戻す
+    //   （9/6実走: 出口から1km先の交差点に「有田・金屋方面＋右矢印」が再登場した）。
+    if(step&&step._xsHou)return farOK?step._xsHou:'';
     if(!step||!step._tollSpanTarget)return '';
     var st=STATE.routeSteps||[];var i=st.indexOf(step);
     if(i<0)return '';
@@ -10222,7 +10250,7 @@ function _xsPlanOf(d,step,isTurn,isFork,C,farOK){
   // (4) 通常（青）。料金所を過ぎた方面分岐もここ
   _XS.exitName='';
   if(/roundabout|merge|ferry/.test(step.maneuver||''))return null;
-  var hou=_xsSpanHoumen(step);   // ★v39e: 区間内は出口ステップの方面名も引き継ぐ
+  var hou=_xsSpanHoumen(step,farOK);   // ★v39e: 区間内は出口ステップの方面名も引き継ぐ（★v44: 引き継ぎ名は距離帯だけ）
   if(!(isTurn||isFork||hou))return null;
   // ★v42(9/4要望): 交差点名も方面名も取れない看板は「まもなく」の発話と同時に出す。
   //   v41で発話だけ110m→70mに遅らせたため、看板が40m先行して出ていた
