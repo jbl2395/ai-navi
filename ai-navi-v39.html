@@ -647,6 +647,15 @@ body:not(.nav-mode) #x-sign{display:none !important;}
     </div>
   </div>
   <div class="sett-sec">
+    <div class="sett-sec-ttl">🚇 トンネル（GPSロスト時）</div>
+    <div class="sett-row" style="flex-direction:column;align-items:flex-start;">
+      <div class="sett-lbl-main" style="margin-bottom:6px;">仮想速度の倍率（進入時）</div>
+      <div class="sett-lbl-sub" style="margin-bottom:8px;">GPSが切れた時に進む速さ。入口で減速していて遅れる（抜けた時にマーカーが飛ぶ）なら上げる。トンネル内で実速度が拾えた時はそちらを優先</div>
+      <input type="range" id="dr-gain-slider" min="0.90" max="1.20" step="0.01" value="1.05" oninput="setDrGain(this.value)">
+      <div id="dr-gain-val" style="font-size:11px;color:rgba(0,200,255,0.7);margin-top:4px;">1.05倍</div>
+    </div>
+  </div>
+  <div class="sett-sec">
     <div class="sett-sec-ttl">🎨 表示設定</div>
     <div class="sett-row">
       <div class="sett-lbl">
@@ -1498,6 +1507,21 @@ var DR_BLEND_ROUTE     = 0.15; // ルート期待速度(距離÷所要)の混合
 var DR_CAL_BASE        = 1.00; // 一律の控えめ係数 ★v44: 0.97→1.00
 var DR_BLEND_MIN_RATIO = 0.88; // ブレンド結果が入口速度に対して下がりすぎないための下限
 var DR_BLEND_MAX_RATIO = 1.10; // 同・上限 ★v44: 1.00→1.10（入口速度を1割まで上回れる）
+// ★v47(9/8要望): トンネル手前でたまたま減速していると、その低い速度をDRが最後まで引きずる。
+//   9/8実走: dr-enter spd:64/seed:62/rt:71 に対し復帰後の実速は70〜74km/h、
+//   360秒のDRで dr-exit ahead:-310m。入口1点の速度だけでは足りないので、
+//   最後に一律の倍率を掛けて「実速寄り」へ寄せる。過走側は出口クランプが止める。
+//   倍率は設定パネル（🚇 トンネル）で 0.90〜1.20 に変更できる。既定は 1.05。
+var DR_GAIN_ENABLE = true;     // false で v46 の動作（倍率なし）に戻る
+var DR_GAIN_DEF    = 1.05;     // 仮想速度の倍率の既定値
+var DR_GAIN_MIN    = 0.90;
+var DR_GAIN_MAX    = 1.20;
+function _drGain(){
+  if(!DR_GAIN_ENABLE)return 1;
+  var v=NaN;try{v=parseFloat(loadSt().drGain);}catch(e){v=NaN;}
+  if(!isFinite(v)||v<DR_GAIN_MIN||v>DR_GAIN_MAX)v=DR_GAIN_DEF;
+  return v;
+}
 // ★トンネル対策(v5): DR中の進行方位を「残りセグメント(数m)」から「前方先読み」に変更する。
 //   _drAdvanceAlongRoute は現在地→次の頂点の方位を使っていたが、頂点間が数mまで詰まると
 //   ポリラインの量子化(約1.1m)がそのまま角度ノイズになり、地図がわずかに傾く原因になっていた。
@@ -7515,6 +7539,7 @@ function _drSeedBlend(gpsMps){
   if(v<g*DR_BLEND_MIN_RATIO)v=g*DR_BLEND_MIN_RATIO; // ルート期待値が外れていても引っぱられ過ぎない
   if(v>g*DR_BLEND_MAX_RATIO)v=g*DR_BLEND_MAX_RATIO;
   v=v*DR_CAL_BASE;
+  v=v*_drGain();   // ★v47: 設定パネルの倍率（既定1.05）
   if(v>DR_MAX_SPEED_MPS)v=DR_MAX_SPEED_MPS;
   if(v<0)v=0;
   return v;
@@ -7836,7 +7861,7 @@ function _drEnter(){
     var _rt=_drRouteSpeedMps();
     var _v=_drSeedBlend(_base);
     if(_v>0)STATE._drSpeed=Math.min(DR_MAX_SPEED_MPS,_v);
-    _navLog('dr-enter',{spd:Math.round((STATE._drSpeed||0)*3.6),seed:(_seed===null?null:Math.round(_seed*3.6)),rt:Math.round(_rt*3.6),step:STATE.stepIdx});
+    _navLog('dr-enter',{spd:Math.round((STATE._drSpeed||0)*3.6),seed:(_seed===null?null:Math.round(_seed*3.6)),rt:Math.round(_rt*3.6),gain:_drGain(),step:STATE.stepIdx}); // ★v47: gain＝仮想速度の倍率
   }catch(_dse){}
   // ★トンネル対策(v6): 案内は凍結し地図だけ推定で動かすため、文言もそれに合わせる
   try{showAiBubble('GPSが受信できません。復帰するまで音声案内を一時停止します。');}catch(e){}
@@ -8501,9 +8526,13 @@ function startGpsTracking(map,destGeo,fromStepIdx){
             // ★v44(9/6): この発話は「目的地までの残り300m」で鳴るが、看板の300m帯は
             //   「曲がりまでの距離」250〜350mで判定するため窓の外になり点かなかった
             //   （9/6実走: 発話時の曲がりまでは約200m）。発話に看板を同期させる。
+            // ★v47(9/8): ここは「目的地周辺です」の看板なので、出口から引き継いだ方面名
+            //   （_xsHou＝有田・金屋 など）は出さない。9/8実走ではこの帯の看板が
+            //   「有田・金屋方面」で出ており、目的地手前の案内としては無関係だった。
+            //   矢印＋方向の言葉（右へ／左へ）だけにする。
             try{
-              var _dnP=_xsPlanOf(distToNext,lookAheadStep,aheadIsTurn,(typeof aheadIsFork!=='undefined'?aheadIsFork:false),_xsCfg(),true);
-              if(_dnP)_xsSaySign(_dnP.name,_dnP.deg,_dnP.color,'300m',true);
+              var _dnDeg=aheadIsTurn?_xsAngleOf(lookAheadStep):null;
+              if(_dnDeg!==null&&_dnDeg!==undefined)_xsSaySign('',_dnDeg,'blue','300m',true);
             }catch(_dne){}
             speakTTSWithChime('およそ300m先、'+_ndTxt+'目的地周辺です。');
           }
@@ -8810,6 +8839,10 @@ function startGpsTracking(map,destGeo,fromStepIdx){
             //   連結部(_soonNext)の「その先、〇〇方面」を誤抽出しないよう本文のみ渡す。
             var _cfMain='およそ'+_cfDist+'m先、'+_cfBody;
             if(/方面です。/.test(_cfBody)){ph.add('rampfork');_setHoumenSoonPlan(_cfMain,distToNext);}
+            // ★v47(9/8): この帯にだけ看板の同期が無かった。9/8実走の「およそ500m先、白浜方面です」は
+            //   catchfork帯（最大500m・rampfork帯の上限450mより外）で鳴っており、
+            //   v45で 700m/300m/rampfork には付けた _saySignFor がここだけ抜けていた。
+            _saySignFor(_cfDist+'m');   // ★v47
             // ★問題3修正: 交差点名のない連続分岐でも「その先〜」をまとめて連結する
             speakTTSWithChime(_cfMain+_soonNext());
           }
@@ -9289,6 +9322,7 @@ function initSettPanel(){
   var decl=s.declination!==undefined?s.declination:0;
   var ds=document.getElementById('declination-slider');if(ds){ds.value=decl;document.getElementById('declination-val').textContent=(decl>=0?'+':'')+decl+'°';}
   try{renderXSign();}catch(_xsr){} // ★v38: 交差点看板の設定を反映
+  try{renderDrGain();}catch(_dgr){} // ★v47: トンネル仮想速度の倍率を反映
   try{var _tsm=document.getElementById('tog-shortmode');if(_tsm)_tsm.classList.toggle('on',shortModeEnabled());}catch(_smr){} // ★v39c: 近距離最短モードのトグルを反映
   renderProbeTune(); // ★v20: リルート調整の現在値を表示
   renderPlaces();
@@ -10141,6 +10175,13 @@ var XS_BAND_TAIL_MS = 1500;  // 発話帯の看板を読み終わってから残
 var XS_DR_EXIT     = true;   // ★v40(問題3-c): DR(仮想)中も有料出口の看板を出す（false でv39動作）
 var XS_OFF_HIDE_M  = 70;     // ★v40(問題1): 青線からこれ以上外れている間は看板を出さない(m)
 var XS_SOON_MAX_MS = 20000;  // ★v41: exitsoon同時看板の保険（発話が来なくてもこの時間で消す）
+// ★v47(9/8): 発話同期の看板は「_speaking を一度も観測できないと XS_SOON_MAX_MS(20秒)まで
+//   居座る」構造だった。9/8実走: 18:24:28 に出た「有田・金屋方面」がちょうど20秒後の
+//   18:24:48 まで残り、その間は距離帯・通常の看板を押しのけていたため、
+//   「まもなく右方向です」の時に右矢印＋有田・金屋方面が出ていた。
+//   (1) 発話が観測できないままこの時間を過ぎたら読み終わり扱いにして消す
+//   (2) 通常の看板が出る距離(showM)まで近づいたら、遠くで出した一発看板は譲る
+var XS_SAY_NOSPK_MS = 8000;
 // ★v42(9/4要望): 実測位(GPS)が来ていない間は看板を次の交差点へ切り替えない。
 //   9/4実走: 17:03:17〜17:03:36 は headsrc が全て hold/ga:0＝実fixゼロ。その推定位置のまま
 //   ステップが1へ進み、右折を終える前に左の看板へ変わっていた。実fixは17:03:37が最初。
@@ -10558,14 +10599,20 @@ function _xsTick(d,step,isTurn,isFork,sayOnly){
     // ★v43: sayOnly＝発話同期の一発看板だけを描く呼び出し（アプローチ中でも出せるように）
     if(sayOnly&&!STATE._xsSoonSign&&!(_XS.shown&&_XS.key==='soon'))return;
     var SS=STATE._xsSoonSign;
+    // ★v47: この看板を出した時の「分岐までの距離」を1回だけ記録する（実距離が分かる呼び出しのみ）
+    if(SS&&!sayOnly&&isFinite(d)&&d>0&&SS.d0===undefined)SS.d0=d;
+    // ★v47: 遠くで出した一発看板は、通常の看板が出る距離まで近づいたら譲る
+    var _ssYield=!!(SS&&!sayOnly&&isFinite(d)&&d>0&&d<=C.showM&&typeof SS.d0==='number'&&SS.d0>C.showM);
     if(SS){
-      if(SS.gen!==(STATE._routeGen||0)||SS.step!==STATE.stepIdx||(now-SS.at)>XS_SOON_MAX_MS){
+      if(_ssYield||SS.gen!==(STATE._routeGen||0)||SS.step!==STATE.stepIdx||(now-SS.at)>XS_SOON_MAX_MS){
         STATE._xsSoonSign=null;
         if(_XS.key==='soon'&&_XS.shown)_xsHide();
       }else{
         var _ssSpk=!!STATE._speaking&&(now-(STATE._speakingAt||0)<12000);
         if(_ssSpk){SS.spoke=1;SS.offAt=0;}
         else if(SS.spoke){ if(!SS.offAt)SS.offAt=now+XS_BAND_TAIL_MS; }
+        // ★v47: 発話が一度も観測できないまま時間が過ぎたら、読み終わり扱いにして消す
+        else if((now-SS.at)>XS_SAY_NOSPK_MS){ SS.spoke=1; SS.offAt=now; }
         if(SS.offAt&&now>=SS.offAt){
           STATE._xsSoonSign=null;
           if(_XS.key==='soon'&&_XS.shown)_xsHide();
@@ -10772,6 +10819,19 @@ function setXSOffx(v){
 function setXSShow(v){
   var n=parseInt(v,10);_xsSaveCfg({showM:n,hideM:Math.max(150,Math.round(n*1.35))});
   var el=document.getElementById('xs-show-val');if(el)el.textContent=n+'m';
+}
+// ★v47: トンネルDRの仮想速度の倍率
+function renderDrGain(){
+  var g=_drGain();
+  var s=document.getElementById('dr-gain-slider');if(s)s.value=g;
+  var el=document.getElementById('dr-gain-val');if(el)el.textContent=g.toFixed(2)+'倍';
+}
+function setDrGain(v){
+  var n=parseFloat(v);
+  if(!isFinite(n))n=DR_GAIN_DEF;
+  n=Math.min(DR_GAIN_MAX,Math.max(DR_GAIN_MIN,n));
+  try{saveSt({drGain:n});}catch(e){}
+  var el=document.getElementById('dr-gain-val');if(el)el.textContent=n.toFixed(2)+'倍';
 }
 // ★v39: Ｕターン警告のしきい値(km)
 function setXSUturn(v){
