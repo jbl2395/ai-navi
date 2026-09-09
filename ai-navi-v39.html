@@ -6954,6 +6954,7 @@ function zoomToDriverView(map,origin,onComplete){
     if(document.body.classList.contains('night-theme')){
       programmaticSetOptions(map,{styles:[{elementType:'geometry',stylers:[{color:'#1a2560'}]},{elementType:'labels.text.stroke',stylers:[{color:'#0a1040'}]},{elementType:'labels.text.fill',stylers:[{color:'#8aa8ff'}]},{featureType:'road',elementType:'geometry',stylers:[{color:'#3545b0'}]},{featureType:'road.highway',elementType:'geometry',stylers:[{color:'#5065d0'}]},{featureType:'water',elementType:'geometry',stylers:[{color:'#0a1850'}]}]});
       document.body.classList.add('night-map-styled');
+      try{_skyDimRefresh();}catch(_e){} // ★v48
     }else{
       programmaticSetOptions(map,{styles:[{elementType:'geometry',stylers:[{color:'#1a2332'}]},{elementType:'labels.text.stroke',stylers:[{color:'#1a2332'}]},{elementType:'labels.text.fill',stylers:[{color:'#8ab4c9'}]},{featureType:'road',elementType:'geometry',stylers:[{color:'#2d3d52'}]},{featureType:'road.highway',elementType:'geometry',stylers:[{color:'#4a5d7a'}]},{featureType:'water',elementType:'geometry',stylers:[{color:'#0a1628'}]}]});
     }
@@ -9221,7 +9222,15 @@ function exitNav(){
   hideCarMarker();document.getElementById('orient-badge').classList.remove('show');
   document.getElementById('nav-mic-btn').classList.remove('show');
   document.body.classList.remove('nav-mode','night-theme','night-map-styled');
-  var _sky=document.getElementById('sky-layer');if(_sky){_sky.classList.remove('daytime','sunrise','sunset','night');_sky._skyTheme=null;} // ★v46: 次回ナビ開始時に必ず塗り直されるようキャッシュを消す
+  var _sky=document.getElementById('sky-layer');if(_sky){_sky.classList.remove('daytime','sunrise','sunset','night');_sky._skyTheme=null;_sky._skyInit=false;_sky.style.background='';} // ★v46/v48: 次回ナビ開始時に必ず塗り直されるようキャッシュとインラインstyleを消す
+  try{_skyNightAmt=0; // ★v48: 連続補間で付けたインラインstyleを全て戻す
+    var _f=document.getElementById('horizon-fog');if(_f)_f.style.background='';
+    var _c=document.getElementById('clouds-layer');if(_c)_c.style.opacity='';
+    var _s2=document.getElementById('stars-layer');if(_s2)_s2.style.opacity='';
+    var _bd=document.getElementById('horizon-dark-blend');if(_bd)_bd.style.background='';
+    var _md=document.getElementById('maps-div');if(_md)_md.style.filter='';
+    var _m3=document.getElementById('map3d-container');if(_m3)_m3.style.filter='';
+  }catch(_skyx){}
   document.getElementById('nav-ui').classList.remove('on');document.getElementById('nav-bottom-bar').classList.remove('show');
   document.getElementById('location-notice').classList.remove('show');document.getElementById('toll-notice').classList.remove('show');
   document.getElementById('offroute-notice').classList.remove('show');document.getElementById('ai-bubble').classList.remove('show');
@@ -9416,7 +9425,11 @@ function saveSett(){
 //   これまでは 5:00/6:30/17:00/19:00 の固定時刻だったため、
 //   夏はまだ明るいのに夕焼け、冬はもう真っ暗なのに夕焼け、というズレが出ていた。
 //   NOAAの太陽位置アルゴリズムで緯度経度と日付から計算する（通信もAPIキーも不要・誤差1分以内）。
-var SKY_TWILIGHT_MIN=30; // 薄明の幅（分）。日の出/日の入りの前後これだけを sunrise/sunset にする。
+// ★v48(9/9要望): 色の変化が4段階のクラス切替だったため、一瞬でドンと変わっていた。
+//   以降は 2つのパレットを連続補間し、SKY_TICK_MS ごとに塗り直す。
+var SKY_TWILIGHT_MIN=45; // 薄明の幅（分）。日の出/日の入りの前後これだけをかけて変化させる（前後45分＝計90分）
+var SKY_TICK_MS=30000;   // 塗り直し間隔（30秒）。前後45分なら 90回に分けて変わる
+var _skyNightAmt=0;      // 直近の「夜度合い」0～1。地図の暗さに使う
 
 // 指定日の日の出/日の入りを「端末ローカル時刻の 0時からの分」で返す。
 // 白夜/極夜など計算できない場合は null。
@@ -9446,22 +9459,85 @@ function _sunTimes(lat,lng,date){
   }catch(e){return null;}
 }
 
-function getSkyTheme(lat,lng){
-  var now=new Date();var t=now.getHours()*60+now.getMinutes();
-  var s=_sunTimes(lat||35.68,lng||139.69,now);
-  if(!s||!(s.set>s.rise)){ // 計算できない時（白夜/極夜など）は従来の固定時刻へフォールバック
-    var h=t/60;
-    if(h>=5.0&&h<6.5)return'sunrise';
-    if(h>=6.5&&h<17.0)return'daytime';
-    if(h>=17.0&&h<19.0)return'sunset';
-    return'night';
+// ★v48: 4つのパレット。sky は7ストップ [位置%,R,G,B]、fog は4ストップ [位置%,R,G,B,A]。
+//   元のCSS(#sky-layer.daytime など)と同じ値をJS側に移しただけ。ここを触れば色味を調整できる。
+var SKY_PAL={
+  daytime:{
+    sky:[[0,0,8,18],[8,10,24,48],[22,26,56,104],[45,58,120,184],[72,106,176,224],[92,154,208,238],[100,184,224,245]],
+    fog:[[0,230,240,250,0.75],[35,210,225,240,0.45],[70,190,210,230,0.18],[100,190,210,230,0]],
+    cloud:0.78
+  },
+  sunrise:{
+    sky:[[0,0,8,16],[12,10,16,36],[32,58,42,90],[55,154,90,122],[78,239,138,90],[95,255,197,138],[100,255,216,168]],
+    fog:[[0,255,220,200,0.75],[35,255,200,180,0.45],[70,245,180,160,0.2],[100,245,180,160,0]],
+    cloud:0.62
+  },
+  sunset:{
+    sky:[[0,0,5,8],[12,10,8,32],[30,42,29,58],[52,130,61,106],[75,200,69,106],[92,255,136,72],[100,255,168,112]],
+    fog:[[0,255,180,140,0.78],[35,255,150,120,0.5],[70,220,110,100,0.22],[100,220,110,100,0]],
+    cloud:0.55
+  },
+  night:{
+    sky:[[0,0,0,0],[10,0,3,8],[25,5,10,32],[50,10,24,80],[78,26,56,144],[95,40,80,184],[100,56,104,208]],
+    fog:[[0,50,80,180,0.65],[40,30,55,140,0.4],[75,20,35,100,0.15],[100,20,35,100,0]],
+    cloud:0.22
   }
-  var w=SKY_TWILIGHT_MIN;
-  if(t>=s.rise-w&&t<s.rise+w)return'sunrise';
-  if(t>=s.rise+w&&t<s.set-w)return'daytime';
-  if(t>=s.set-w&&t<s.set+w)return'sunset';
-  return'night';
+};
+
+function _skyLerp(a,b,k){return a+(b-a)*k;}
+
+// 2つのパレットを k(0〜1) で混ぜて linear-gradient の文字列を作る。位置%も一緒に補間する。
+function _skyGrad(A,B,k,dir,hasAlpha){
+  var out=[];
+  for(var i=0;i<A.length;i++){
+    var a=A[i],b=B[i];
+    var pos=_skyLerp(a[0],b[0],k);
+    var r=Math.round(_skyLerp(a[1],b[1],k));
+    var g=Math.round(_skyLerp(a[2],b[2],k));
+    var bl=Math.round(_skyLerp(a[3],b[3],k));
+    var col=hasAlpha?('rgba('+r+','+g+','+bl+','+_skyLerp(a[4],b[4],k).toFixed(3)+')'):('rgb('+r+','+g+','+bl+')');
+    out.push(col+' '+pos.toFixed(2)+'%');
+  }
+  return 'linear-gradient('+dir+','+out.join(',')+')';
 }
+
+// 現在時刻から「どの2つのパレットをどれだけ混ぜるか」を返す。
+//   夜 →(45分)→ 日の出 →(45分)→ 昼 …… 昼 →(45分)→ 日の入り →(45分)→ 夜
+function _skyMix(lat,lng){
+  var now=new Date();var t=now.getHours()*60+now.getMinutes()+now.getSeconds()/60;
+  var s=_sunTimes(lat||35.68,lng||139.69,now);
+  if(!s||!(s.set>s.rise))s={rise:6*60,set:18*60}; // 白夜/極夜など計算不能時の固定値
+  var w=SKY_TWILIGHT_MIN;
+  if(t<s.rise-w)return{a:'night',b:'night',k:0};
+  if(t<s.rise)  return{a:'night',b:'sunrise',k:(t-(s.rise-w))/w};
+  if(t<s.rise+w)return{a:'sunrise',b:'daytime',k:(t-s.rise)/w};
+  if(t<s.set-w) return{a:'daytime',b:'daytime',k:0};
+  if(t<s.set)   return{a:'daytime',b:'sunset',k:(t-(s.set-w))/w};
+  if(t<s.set+w) return{a:'sunset',b:'night',k:(t-s.set)/w};
+  return{a:'night',b:'night',k:0};
+}
+
+// 互換用：一番近いテーマ名を返す（他の箇所から呼ばれても壊れないように残す）
+function getSkyTheme(lat,lng){
+  var m=_skyMix(lat,lng);
+  return (m.k<0.5)?m.a:m.b;
+}
+
+// ★v48: 地図の暗さも段階ではなく連続に。n=0(昼)〜1(夜)。
+//   夜スタイル(青系)が当たっている時は元CSSと同じく控えめのフィルタにする。
+function _applyMapDim(n){
+  var styled=document.body.classList.contains('night-map-styled');
+  var f='';
+  if(n>0.002){
+    f=styled
+      ?('brightness('+(1-0.15*n).toFixed(3)+') saturate('+(1+0.10*n).toFixed(3)+')')
+      :('brightness('+(1-0.42*n).toFixed(3)+') saturate('+(1+0.20*n).toFixed(3)+') hue-rotate('+Math.round(210*n)+'deg)');
+  }
+  var ids=['maps-div','map3d-container'];
+  for(var i=0;i<ids.length;i++){var el=document.getElementById(ids[i]);if(el)el.style.filter=f;}
+}
+// 地図スタイル(昼/夜)を切り替えた直後に、暗さを今の夜度合いで塗り直す
+function _skyDimRefresh(){try{_applyMapDim(_skyNightAmt);}catch(e){}}
 
 function generateStars(){
   var el=document.getElementById('stars-layer');if(!el||el.childElementCount>0)return;
@@ -9479,15 +9555,54 @@ function _reapplyMapStyleForSky(){
   }catch(e){}
 }
 
+// ★v48: クラス切替をやめ、空・雲・星・地平線・地図の暗さを毎回そのまま塗り直す。
 function applySkyTheme(lat,lng){
-  var sky=document.getElementById('sky-layer');if(!sky)return;var theme=getSkyTheme(lat||35.68,lng||139.69);
-  var prev=sky._skyTheme||null;
-  if(prev===theme)return; // ★v46: 変わった時だけ塗り替える（1分ごとに呼ばれるため）
-  sky._skyTheme=theme;
-  sky.classList.remove('daytime','sunrise','sunset','night');sky.classList.add(theme);
-  if(theme==='night'){document.body.classList.add('night-theme');generateStars();}
-  else{document.body.classList.remove('night-theme','night-map-styled');}
-  if(prev&&((prev==='night')!==(theme==='night')))_reapplyMapStyleForSky(); // 初回は zoomToDriverView 側に任せる
+  var sky=document.getElementById('sky-layer');if(!sky)return;
+  var m=_skyMix(lat,lng);
+  var k=m.k;k=k*k*(3-2*k); // なめらかに（両端の変化をゆるくする）
+  var A=SKY_PAL[m.a],B=SKY_PAL[m.b];
+  if(!A||!B)return;
+
+  sky.style.background=_skyGrad(A.sky,B.sky,k,'to bottom',false);
+
+  var fog=document.getElementById('horizon-fog');
+  if(fog)fog.style.background=_skyGrad(A.fog,B.fog,k,'to top',true);
+
+  var cl=document.getElementById('clouds-layer');
+  if(cl)cl.style.opacity=_skyLerp(A.cloud,B.cloud,k).toFixed(3);
+
+  // 夜の度合い（0〜1）。星の濃さ・地平線のにじみ・地図の暗さに使う。
+  var n=(m.a==='night'?1-k:0)+(m.b==='night'?k:0);
+  _skyNightAmt=n;
+
+  var st=document.getElementById('stars-layer');
+  if(st){if(n>0.002)generateStars();st.style.opacity=n.toFixed(3);}
+
+  var bd=document.getElementById('horizon-dark-blend');
+  if(bd){
+    var r=Math.round(_skyLerp(0,0,n)),g=Math.round(_skyLerp(5,0,n)),b2=Math.round(_skyLerp(20,4,n));
+    var al=_skyLerp(0.95,0.98,n).toFixed(3);
+    bd.style.background='linear-gradient(to bottom,rgba('+r+','+g+','+b2+','+al+') 0%,transparent 100%)';
+  }
+
+  _applyMapDim(n);
+
+  // Google地図のスタイル(昼系/夜系)だけは連続にできないので、日の出/日の入りの瞬間に1回だけ切り替える。
+  var isNight=(n>=0.5),was=document.body.classList.contains('night-theme');
+  if(isNight!==was){
+    if(isNight){document.body.classList.add('night-theme');}
+    else{document.body.classList.remove('night-theme','night-map-styled');}
+    if(sky._skyInit)_reapplyMapStyleForSky(); // 初回は zoomToDriverView 側に任せる
+    _applyMapDim(n); // night-map-styled の有無が変わるので塗り直し
+  }
+  sky._skyInit=true;
+
+  // 互換：一番近いテーマ名のクラスも付けておく（見た目はインラインstyleが優先される）
+  var near=(k<0.5)?m.a:m.b;
+  if(sky._skyTheme!==near){
+    sky.classList.remove('daytime','sunrise','sunset','night');
+    sky.classList.add(near);sky._skyTheme=near;
+  }
 }
 
 // ★v46: 走行中に時間が進んでも空が変わるよう、1分ごとに再判定する。
@@ -9499,7 +9614,7 @@ function _skyTick(){
     applySkyTheme(p?p.lat:null,p?p.lng:null);
   }catch(e){}
 }
-setInterval(_skyTick,60000);
+setInterval(_skyTick,SKY_TICK_MS);
 // バックグラウンドではタイマーが間引かれるので、復帰時に必ず1回追いつかせる
 document.addEventListener('visibilitychange',function(){if(!document.hidden)_skyTick();});
 
@@ -9707,6 +9822,7 @@ WALK._applyMapStyle=function(map){
   if(document.body.classList.contains('night-theme')){
     programmaticSetOptions(map,{styles:[{elementType:'geometry',stylers:[{color:'#1a2560'}]},{elementType:'labels.text.stroke',stylers:[{color:'#0a1040'}]},{elementType:'labels.text.fill',stylers:[{color:'#8aa8ff'}]},{featureType:'road',elementType:'geometry',stylers:[{color:'#3545b0'}]},{featureType:'road.highway',elementType:'geometry',stylers:[{color:'#5065d0'}]},{featureType:'water',elementType:'geometry',stylers:[{color:'#0a1850'}]}]});
     document.body.classList.add('night-map-styled');
+    try{_skyDimRefresh();}catch(_e){} // ★v48
   }else{
     programmaticSetOptions(map,{styles:[{elementType:'geometry',stylers:[{color:'#1a2332'}]},{elementType:'labels.text.stroke',stylers:[{color:'#1a2332'}]},{elementType:'labels.text.fill',stylers:[{color:'#8ab4c9'}]},{featureType:'road',elementType:'geometry',stylers:[{color:'#2d3d52'}]},{featureType:'road.highway',elementType:'geometry',stylers:[{color:'#4a5d7a'}]},{featureType:'water',elementType:'geometry',stylers:[{color:'#0a1628'}]}]});
   }
