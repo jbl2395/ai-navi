@@ -997,7 +997,7 @@ var START_REROUTE_GRACE_MS = 25000;
 // ★v41(9/3要望): 「まもなく〇方向です」の発話位置。交差点名も方面名も取れない分岐は
 //   一般道の低速路が多く、110m手前だと早すぎる＝40m進んだ 70m 手前で言う。
 var SOON_SAY_M        = 110;  // 交差点名 or 方面名がある場合（従来どおり）
-var SOON_SAY_NONAME_M = 70;   // 名前が何も取れない場合
+var SOON_SAY_NONAME_M = 80;   // 名前が何も取れない場合 ★v49(9/11要望): 70→80（10m早く）。看板の表示開始も同じ値
 // ★開始アプローチ(修正4): 案内開始時、現在地がルート青線から APPROACH_ENTER_M 超離れている場合は
 //   「開始前アプローチ状態」とみなす。駐車場や敷地内で案内開始した典型シーン。
 //   この間は開始発話（「ルート案内を開始します…」）を完全発話した後、リルートも距離帯案内も全て無言。
@@ -6247,7 +6247,7 @@ function startFreeRoamTracking(map){
     STATE.lastLat=pos.coords.latitude;STATE.lastLng=pos.coords.longitude;
     STATE.currentGeoData={lat:pos.coords.latitude,lng:pos.coords.longitude,addr:'現在地'};
     var spd=pos.coords.speed?Math.round(pos.coords.speed*3.6):0;
-    document.getElementById('nav-speed').textContent=String(spd);
+    document.getElementById('nav-speed').textContent=String(_spdDisp(spd)); // ★v49: 現在地画面(実GPS)も+4
     if(pos.coords.heading!==null&&pos.coords.heading!==undefined&&!isNaN(pos.coords.heading)&&pos.coords.speed>1.5){
       // GPS速度が十分な時はGPS headingを使用（地理的北基準の絶対方位、補正不要）
       STATE.currentHeading=pos.coords.heading;STATE._headValid=true; // ★v25
@@ -7183,6 +7183,18 @@ function _exitScanBends(step){
   }catch(e){return null;}
 }
 
+// ★v49(9/11要望): 出口ランプの「まもなく、〇〇方面です。」を出すランプ始点からの距離。
+//   v15〜v48は80m。9/10帰りの有田IC(prog:86)で早いとの報告により30m遅らせる。全IC共通。
+var EXITSOON_PROG_M = 110;
+// ★v49(9/11要望): 速度計の表示を車のメーターに合わせる。GPS速度(≒実速度)は
+//   車のメーターより約4km/h低く出る（メーター60→ナビ56、100→96）。
+//   実fix(GPSが効いている間)の「表示」だけに足す。DR(トンネル)中の表示・DR計算・案内判定は無変更。
+var SPD_DISP_OFFSET_KMH = 4;   // 0 で v48 の表示に戻る
+var SPD_DISP_MIN_KMH    = 10;  // これ未満(停車〜徐行)は足さない＝停車中に「4」と出さない
+function _spdDisp(kmh){
+  if(kmh==null||isNaN(kmh))return kmh;
+  return (kmh>=SPD_DISP_MIN_KMH)?(kmh+SPD_DISP_OFFSET_KMH):kmh;
+}
 // ★EXITSOON(v15): 出口ステップの始点から現在地までの「ポリライン沿いの走行距離」を返す。
 //   ループランプでは直線距離が全く当てにならない（海南は80m走っても直線では40m程度）ため、
 //   必ず経路長で測る。またループは自分自身に接近するので、最近傍を全体から探すと
@@ -8153,7 +8165,7 @@ function startGpsTracking(map,destGeo,fromStepIdx){
       STATE.lastLat=pos.coords.latitude;STATE.lastLng=pos.coords.longitude;
       var cur=new google.maps.LatLng(pos.coords.latitude,pos.coords.longitude);
       var spd=pos.coords.speed?Math.round(pos.coords.speed*3.6):null;
-      if(spd!==null)document.getElementById('nav-speed').textContent=String(spd);
+      if(spd!==null)document.getElementById('nav-speed').textContent=String(pos._dr?spd:_spdDisp(spd)); // ★v49: 実fixだけ+4
       // ★ パナソニック方式: 停止→移動開始を検知して案内開始発話を繰り返す
       // ★開始発話(_startAnnounceDone)を言い切るまでは割り込まない（開始発話の途切れ防止）
       if(!STATE._startMoveSpoken&&STATE._startSpokenMsg&&STATE._startAnnounceDone&&!STATE._approachMode&&!_apSideBusy()){ // ★v28 左右案内を言い切ってから
@@ -8802,7 +8814,7 @@ function startGpsTracking(map,destGeo,fromStepIdx){
             if(!_xp||_xp.key!==_xsKey){_xp=STATE._exitProg={key:_xsKey,i:1,m:0};}
             var _xr=_exitProgressM(nextStep,cur,_xp.i);
             if(_xr&&_xr.m>_xp.m){_xp.m=_xr.m;_xp.i=_xr.i;} // 進行は巻き戻さない
-            if(_xp.m>=80){
+            if(_xp.m>=EXITSOON_PROG_M){ // ★v49: 80→110m（全IC共通）
               STATE._exitSoonSaid[_xsKey]=1;
               try{_navLog('exitsoon',{hou:_xsHou,step:STATE.stepIdx,prog:Math.round(_xp.m)});}catch(_xse2){}
               // ★v41(B案): 発話と同時に方面看板を出す。分岐まで1km前後あって距離帯の外なので
