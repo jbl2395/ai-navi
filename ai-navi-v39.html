@@ -12127,6 +12127,52 @@ var INTL=(function(){
     else window.addEventListener('load',offerResume);
   }catch(e){}
 
+
+  // ==========================================================================
+  // ★v06 ロック画面に残る再生バーを消す
+  //   TTS用の <audio> が音を鳴らしたままだと、iOSが「再生中のアプリ」とみなして
+  //   ロック画面とコントロールセンターに再生バーを出し続ける。
+  //   画面を離れた時に音声要素を解放してバーを消すが、
+  //   ★案内中・乗船中は解放しない（バックグラウンドで喋れなくなるため）。
+  //   M.MEDIA_CLEAR=false で、この処理だけ止められる。
+  // ==========================================================================
+  M.MEDIA_CLEAR=true;
+
+  function navBusy(){
+    try{
+      if(STATE.navActive||STATE.navStarted||STATE.navPaused)return true;   // 車の案内中
+    }catch(e){}
+    if(M._busy)return true;                                                // 空路の演出中
+    if(M.ferry&&M.ferry.stage==='sail')return true;                        // 乗船中
+    return false;
+  }
+  function releaseAudio(a){
+    if(!a)return;
+    try{a.pause();}catch(e){}
+    try{a.removeAttribute('src');}catch(e){}
+    try{a.load();}catch(e){}
+  }
+  function clearNowPlaying(){
+    if(!M.MEDIA_CLEAR)return;
+    if(navBusy())return;
+    try{if(typeof _unlockedAudio!=='undefined')releaseAudio(_unlockedAudio);}catch(e){}
+    try{if(typeof _chatBeepAudio!=='undefined')releaseAudio(_chatBeepAudio);}catch(e){}
+    try{if(typeof _silentPrimer!=='undefined')releaseAudio(_silentPrimer);}catch(e){}
+    try{
+      if(navigator.mediaSession){
+        navigator.mediaSession.metadata=null;
+        navigator.mediaSession.playbackState='none';
+      }
+    }catch(e){}
+    log('media-clear',{});
+  }
+  try{
+    document.addEventListener('visibilitychange',function(){
+      if(document.visibilityState==='hidden')clearNowPlaying();
+    });
+    window.addEventListener('pagehide',function(){clearNowPlaying();});
+  }catch(e){}
+
   return M;
 })();
 
