@@ -6497,6 +6497,15 @@ function geocodeAndNavigate(dest){
       var loc=data.results[0].geometry.location;var addr=data.results[0].formatted_address;
       STATE.currentDestTypes=data.results[0].types||null; // ★施設判定用
       setStatus('FOUND: '+addr.substring(0,26).toUpperCase());
+      // ★v01 海外対応: 国外の目的地は最寄りの国際空港へ切り替える（予告編演出つき）
+      //   INTL.ENABLE=false、または country が JP / 判定不能 のときは下の従来処理にそのまま流れる。
+      //   万一 INTL 側で例外が出ても、その場合は下の従来処理に落ちるだけで、前版より悪くならない。
+      try{
+        if(typeof INTL!=='undefined'&&INTL.ENABLE&&INTL.isOverseas(data.results[0])){
+          INTL.startOverseas(dest,{lat:loc.lat,lng:loc.lng,addr:addr});
+          return;
+        }
+      }catch(_intlE){try{INTL._abort('海外の案内を開始できませんでした。');}catch(_e2){}}
       speakTTS('目的地を'+dest+'に設定しました。'); // ★メインホーム入力時の確定発話
       globe.rotateToTarget(-loc.lng);
       setTimeout(function(){startZoomFlow(dest,'live',{lat:loc.lat,lng:loc.lng,addr:addr});},2200);
@@ -10966,6 +10975,650 @@ function setXSUturn(v){
   var n=parseInt(v,10);if(!isFinite(n)||n<1)n=10;_xsSaveCfg({uturnKm:n});
   var el=document.getElementById('xs-uturn-val');if(el)el.textContent=n+'km';
 }
+
+// ============================================================================
+// ★v01 海外対応（INTL）— 完全別枠・純追加ブロック
+//   既存コードへの変更は geocodeAndNavigate の「FOUND」直後に足した
+//   5行のフックだけ。それ以外の関数・変数には一切触れていない。
+//   INTL.ENABLE=false にすると前版とまったく同じ動作（国内のみ）に戻る。
+//
+//   v01 の範囲: 海外判定 → 最寄り国際空港（車の所要時間が最短）までの車案内
+//               ＋ 目的地入力直後の「予告編」演出
+//               （空港までの青線 → 地球儀 → 黄色の放物線＋飛行機 → 目的地上空へズームイン）
+//   v02 で 空港到着後のガイド／搭乗／飛行中表示、v03 で 離島・フェリーを追加予定。
+// ============================================================================
+var INTL=(function(){
+  var M={};
+  M.ENABLE=true;          // ← false で前版の動作に戻す
+  M.VER='v01';
+
+  // ---- 演出の尺（ミリ秒）。テンポを変えたいときはここだけ触る ----
+  var T_MAP_HOLD=3200;    // 空港までの青線を見せている時間
+  var T_FADE=900;         // 地図→地球儀の切り替え
+  var T_ARC=3400;         // 放物線を描きながら地球儀を回す時間
+  var T_HOLD=700;         // 目的地上空で止まる時間
+  var T_ZOOM=1800;        // 目的地上空へのズームイン
+  var ARC_ALT=0.30;       // 放物線の最大の高さ（地球の半径に対する比）
+  var ARC_N=200;          // 放物線のサンプル数
+
+  // ---- 国内の国際線空港。直線距離で3つに絞ってから車の所要時間を比べる ----
+  M.AIRPORTS=[
+    {n:'新千歳空港',la:42.7752,ln:141.6923},
+    {n:'旭川空港',la:43.6708,ln:142.4475},
+    {n:'函館空港',la:41.7700,ln:140.8219},
+    {n:'青森空港',la:40.7347,ln:140.6908},
+    {n:'秋田空港',la:39.6156,ln:140.2186},
+    {n:'仙台空港',la:38.1397,ln:140.9170},
+    {n:'新潟空港',la:37.9559,ln:139.1211},
+    {n:'成田国際空港',la:35.7720,ln:140.3929},
+    {n:'羽田空港',la:35.5494,ln:139.7798},
+    {n:'茨城空港',la:36.1811,ln:140.4147},
+    {n:'富山空港',la:36.6483,ln:137.1877},
+    {n:'小松空港',la:36.3946,ln:136.4075},
+    {n:'中部国際空港',la:34.8584,ln:136.8054},
+    {n:'静岡空港',la:34.7961,ln:138.1894},
+    {n:'関西国際空港',la:34.4342,ln:135.2328},
+    {n:'岡山空港',la:34.7569,ln:133.8553},
+    {n:'広島空港',la:34.4361,ln:132.9194},
+    {n:'米子空港',la:35.4922,ln:133.2464},
+    {n:'高松空港',la:34.2142,ln:134.0156},
+    {n:'松山空港',la:33.8272,ln:132.6997},
+    {n:'福岡空港',la:33.5859,ln:130.4506},
+    {n:'北九州空港',la:33.8459,ln:131.0350},
+    {n:'佐賀空港',la:33.1497,ln:130.3025},
+    {n:'長崎空港',la:32.9169,ln:129.9136},
+    {n:'熊本空港',la:32.8373,ln:130.8550},
+    {n:'大分空港',la:33.4794,ln:131.7372},
+    {n:'宮崎空港',la:31.8772,ln:131.4486},
+    {n:'鹿児島空港',la:31.8034,ln:130.7194},
+    {n:'那覇空港',la:26.1958,ln:127.6459}
+  ];
+
+  // ============================ 小道具 ============================
+  var D=Math.PI/180;
+  function hav(a,b){
+    var R=6371000,dLa=(b.la-a.la)*D,dLn=(b.ln-a.ln)*D;
+    var s=Math.sin(dLa/2)*Math.sin(dLa/2)+Math.cos(a.la*D)*Math.cos(b.la*D)*Math.sin(dLn/2)*Math.sin(dLn/2);
+    return 2*R*Math.asin(Math.min(1,Math.sqrt(s)));
+  }
+  function comma(n){
+    var s=String(Math.round(n)),o='',c=0,i;
+    for(i=s.length-1;i>=0;i--){o=s.charAt(i)+o;c++;if(c%3===0&&i>0)o=','+o;}
+    return o;
+  }
+  function log(tag,o){try{if(typeof _navLog==='function')_navLog(tag,o);}catch(e){}}
+  function say(t){try{if(typeof speakTTS==='function')speakTTS(t);}catch(e){}}
+  function $(id){return document.getElementById(id);}
+
+  // ---- 目的地が海外かどうか（Geocode結果の country が JP 以外なら海外） ----
+  M.countryOf=function(res){
+    try{
+      var c=(res&&res.address_components)||[],i,j;
+      for(i=0;i<c.length;i++){
+        var t=c[i].types||[];
+        for(j=0;j<t.length;j++){if(t[j]==='country')return c[i].short_name||'';}
+      }
+    }catch(e){}
+    return '';
+  };
+  M.isOverseas=function(res){
+    var cc=M.countryOf(res);
+    return !!cc&&cc!=='JP';   // country が取れない時は「国内」扱い＝前版の動作のまま
+  };
+
+  // ---- 現在地（案内前なので watch はまだ動いていない） ----
+  M._fix=function(cb){
+    if(STATE.lastLat&&STATE.lastLng){cb({la:STATE.lastLat,ln:STATE.lastLng});return;}
+    if(STATE.originGeoData&&STATE.originGeoData.lat){cb({la:STATE.originGeoData.lat,ln:STATE.originGeoData.lng});return;}
+    if(!navigator.geolocation){cb(null);return;}
+    var done=false;
+    var tm=setTimeout(function(){if(!done){done=true;cb(null);}},15000);
+    navigator.geolocation.getCurrentPosition(function(p){
+      if(done)return;done=true;clearTimeout(tm);
+      STATE.lastLat=p.coords.latitude;STATE.lastLng=p.coords.longitude;
+      cb({la:p.coords.latitude,ln:p.coords.longitude});
+    },function(){
+      if(done)return;done=true;clearTimeout(tm);cb(null);
+    },{enableHighAccuracy:true,timeout:12000,maximumAge:30000});
+  };
+
+  // ---- 最寄りの国際空港＝車の所要時間が最短のもの ----
+  //   直線距離で上位3つに絞ってから Distance Matrix で1回だけ比較する（API節約）。
+  //   ログには「選んだ1つ」ではなく候補全部を残す。
+  M.pickAirport=function(o,cb){
+    var list=[],i;
+    for(i=0;i<M.AIRPORTS.length;i++){
+      var a=M.AIRPORTS[i];
+      list.push({ap:a,straight:hav(o,{la:a.la,ln:a.ln})});
+    }
+    list.sort(function(x,y){return x.straight-y.straight;});
+    var cands=list.slice(0,3);
+    var cl=[];
+    for(i=0;i<cands.length;i++)cl.push(cands[i].ap.n+':'+Math.round(cands[i].straight/1000)+'km');
+    log('intl-cand',{c:cl.join(' / ')});
+
+    // 所要時間は Directions で取る（このアプリが元から使っているAPIなので、
+    // Distance Matrix を別に有効化しなくても必ず動く）。取れた経路は
+    // 予告編の1枚目にそのまま使い回すので、ルート取得は1回で済む。
+    var fin=false,pending=cands.length;
+    function finish(how){
+      if(fin)return;fin=true;clearTimeout(tm);
+      var best=null,rl=[],k;
+      for(k=0;k<cands.length;k++){
+        var c=cands[k];
+        if(c.durSec!==undefined){
+          rl.push(c.ap.n+':'+Math.round(c.durSec/60)+'分/'+Math.round(c.distM/1000)+'km');
+          if(!best||c.durSec<best.durSec)best=c;
+        }else{
+          rl.push(c.ap.n+':NG');
+        }
+      }
+      log('intl-dur',{how:how,r:rl.join(' / ')});          // ★候補は全部残す
+      log('intl-pick',{ap:(best||cands[0]).ap.n,how:best?'duration':'fallback-straight'});
+      cb(best||cands[0]);
+    }
+    var tm=setTimeout(function(){finish('timeout');},20000);
+    try{
+      var svc=new google.maps.DirectionsService();
+      for(i=0;i<cands.length;i++){
+        (function(c){
+          svc.route({
+            origin:new google.maps.LatLng(o.la,o.ln),
+            destination:new google.maps.LatLng(c.ap.la,c.ap.ln),
+            travelMode:google.maps.TravelMode.DRIVING,
+            region:'jp',language:'ja'
+          },function(res,status){
+            if(status===google.maps.DirectionsStatus.OK&&res&&res.routes&&res.routes[0]&&
+               res.routes[0].legs&&res.routes[0].legs[0]){
+              var lg=res.routes[0].legs[0];
+              c.durSec=lg.duration?lg.duration.value:0;
+              c.durText=lg.duration?lg.duration.text:'';
+              c.distM=lg.distance?lg.distance.value:0;
+              c.distText=lg.distance?lg.distance.text:'';
+              c.route=res.routes[0];
+            }
+            pending--;
+            if(pending<=0)finish('directions');
+          });
+        })(cands[i]);
+      }
+    }catch(e){
+      clearTimeout(tm);log('intl-dur',{how:'exception'});cb(cands[0]);
+    }
+  };
+
+  // ---- 空港の駐車場（見つからなければ空港そのものを目的地にする） ----
+  M.findParking=function(ap,cb){
+    var fin=false;
+    var fb={lat:ap.la,lng:ap.ln,addr:ap.n,isPark:false};
+    function done(r){if(fin)return;fin=true;cb(r);}
+    var tm=setTimeout(function(){log('intl-park',{r:'timeout'});done(fb);},9000);
+    try{
+      var svc=new google.maps.places.PlacesService(document.createElement('div'));
+      svc.textSearch({
+        query:ap.n+' 駐車場',
+        location:new google.maps.LatLng(ap.la,ap.ln),
+        radius:5000
+      },function(res,status){
+        clearTimeout(tm);
+        if(status!==google.maps.places.PlacesServiceStatus.OK||!res||!res.length){
+          log('intl-park',{r:'ng-'+status});done(fb);return;
+        }
+        for(var i=0;i<res.length;i++){
+          var p=res[i];
+          if(!p.geometry||!p.geometry.location)continue;
+          var la=p.geometry.location.lat(),ln=p.geometry.location.lng();
+          if(hav({la:ap.la,ln:ap.ln},{la:la,ln:ln})>6000)continue;   // 空港から離れすぎは捨てる
+          log('intl-park',{r:'ok',n:String(p.name||'').slice(0,20)});
+          done({lat:la,lng:ln,addr:p.formatted_address||ap.n,isPark:true,name:p.name||''});
+          return;
+        }
+        log('intl-park',{r:'no-near'});done(fb);
+      });
+    }catch(e){clearTimeout(tm);log('intl-park',{r:'exception'});done(fb);}
+  };
+
+  // ============================ 画面（予告編） ============================
+  var built=false,GLOBE=null,arcCv=null,arcCtx=null,G={box:0,dpr:1};
+  var PTS=null,ROT=null,timers=[],raf=0,lastP=0,lastName='';
+
+  var CSS=''+
+  '#intl-prev{position:fixed;inset:0;z-index:9000;background:#000;display:none;overflow:hidden;}'+
+  '#intl-prev.on{display:block;}'+
+  '#intl-map{position:absolute;inset:0;opacity:0;transition:opacity .8s ease;background:#04101e;}'+
+  '#intl-globe-box{position:absolute;opacity:0;transition:opacity .9s ease;will-change:transform;}'+
+  '#intl-globe-cv{position:absolute;inset:0;width:100%;height:100%;display:block;border-radius:50%;filter:drop-shadow(0 0 26px rgba(0,150,255,0.5)) drop-shadow(0 0 60px rgba(0,80,200,0.28));}'+
+  '#intl-arc-cv{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none;}'+
+  '#intl-hud{position:absolute;left:14px;right:14px;top:calc(env(safe-area-inset-top,0px) + 18px);text-align:center;pointer-events:none;}'+
+  '#intl-hud-t{font-family:"Orbitron",sans-serif;font-size:clamp(11px,3.2vw,16px);letter-spacing:0.18em;color:#fff;text-shadow:0 0 10px rgba(0,200,255,0.9);}'+
+  '#intl-hud-s{margin-top:8px;font-size:clamp(10px,2.8vw,13px);letter-spacing:0.08em;color:rgba(255,220,120,0.95);text-shadow:0 0 10px rgba(255,180,0,0.5);}'+
+  '#intl-flash{position:absolute;inset:0;background:radial-gradient(circle at 50% 50%,rgba(255,255,255,0.95),rgba(255,220,120,0.0) 65%);opacity:0;pointer-events:none;transition:opacity .7s ease;}'+
+  '#intl-skip{position:absolute;right:14px;bottom:calc(env(safe-area-inset-bottom,0px) + 18px);z-index:9001;background:rgba(4,10,22,0.85);border:1px solid rgba(0,200,255,0.45);color:rgba(0,220,255,0.95);border-radius:12px;padding:9px 15px;font-family:"Orbitron",sans-serif;font-size:11px;letter-spacing:0.12em;cursor:pointer;}'+
+  '#intl-skip:active{transform:scale(0.94);}';
+
+  var MAPSTYLE=[
+    {elementType:'geometry',stylers:[{color:'#0b1c2c'}]},
+    {elementType:'labels.text.fill',stylers:[{color:'#8ec9ff'}]},
+    {elementType:'labels.text.stroke',stylers:[{color:'#05121e'}]},
+    {featureType:'water',elementType:'geometry',stylers:[{color:'#04121f'}]},
+    {featureType:'road',elementType:'geometry',stylers:[{color:'#12304a'}]},
+    {featureType:'road.highway',elementType:'geometry',stylers:[{color:'#1b4f77'}]},
+    {featureType:'poi',stylers:[{visibility:'off'}]},
+    {featureType:'transit',stylers:[{visibility:'off'}]},
+    {featureType:'administrative',elementType:'geometry',stylers:[{color:'#2a5a7a'}]}
+  ];
+
+  function build(){
+    if(built)return;
+    built=true;
+    var st=document.createElement('style');st.type='text/css';st.appendChild(document.createTextNode(CSS));
+    document.head.appendChild(st);
+    var d=document.createElement('div');d.id='intl-prev';
+    d.innerHTML=''+
+      '<div id="intl-map"></div>'+
+      '<div id="intl-globe-box"><canvas id="intl-globe-cv"></canvas><canvas id="intl-arc-cv"></canvas></div>'+
+      '<div id="intl-hud"><div id="intl-hud-t"></div><div id="intl-hud-s"></div></div>'+
+      '<div id="intl-flash"></div>'+
+      '<button id="intl-skip" type="button">SKIP ▶</button>';
+    document.body.appendChild(d);
+    $('intl-skip').addEventListener('click',function(){if(M._skip)M._skip();});
+    sizeBox();
+    window.addEventListener('resize',function(){
+      if(!$('intl-prev').classList.contains('on'))return;
+      sizeBox();
+      // 回転が止まっている段（ズーム直前など）でも消えないよう、最後の絵を描き直す
+      if(PTS&&ROT&&!raf)drawArc(lastP,lastName);
+    });
+  }
+
+  function sizeBox(){
+    var box=Math.round(Math.min(window.innerWidth*0.86,window.innerHeight*0.62));
+    if(box<160)box=160;
+    G.box=box;
+    G.dpr=Math.min(2,window.devicePixelRatio||1);
+    var el=$('intl-globe-box');
+    el.style.width=box+'px';el.style.height=box+'px';
+    el.style.left=Math.round((window.innerWidth-box)/2)+'px';
+    el.style.top=Math.round((window.innerHeight-box)/2)+'px';
+    if(arcCv){arcCv.width=Math.round(box*G.dpr);arcCv.height=Math.round(box*G.dpr);}
+  }
+
+  function setHud(t,s){var a=$('intl-hud-t'),b=$('intl-hud-s');if(a)a.textContent=t||'';if(b)b.textContent=s||'';}
+  function after(ms,fn){var id=setTimeout(fn,ms);timers.push(id);return id;}
+  function clearAll(){
+    for(var i=0;i<timers.length;i++)clearTimeout(timers[i]);
+    timers=[];
+    if(raf){cancelAnimationFrame(raf);raf=0;}
+  }
+
+  // ============================ 地球儀（起動画面とは別インスタンス） ============================
+  function makeGlobe(canvas){
+    var gl=canvas.getContext('webgl',{alpha:true,antialias:true})||canvas.getContext('experimental-webgl');
+    if(!gl)return null;
+    var SIZE=512;canvas.width=SIZE;canvas.height=SIZE;
+  var VS='attribute vec2 a_pos;varying vec2 v_uv;void main(){v_uv=a_pos*0.5+0.5;gl_Position=vec4(a_pos,0,1);}';
+  var FS='precision mediump float;varying vec2 v_uv;uniform sampler2D u_map;uniform float u_rot;uniform float u_time;uniform float u_fade;'+
+  'float hash(vec2 p){p=fract(p*vec2(127.1,311.7));p+=dot(p,p+19.19);return fract(p.x*p.y);}'+
+  'float noise(vec2 p){vec2 i=floor(p),f=fract(p);vec2 u=f*f*(3.0-2.0*f);return mix(mix(hash(i),hash(i+vec2(1,0)),u.x),mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),u.x),u.y);}'+
+  'float fbm(vec2 p){float v=0.0,a=0.5;for(int i=0;i<4;i++){v+=noise(p)*a;p*=2.1;a*=0.5;}return v;}'+
+  'void main(){vec2 dc=(v_uv-0.5)*2.0;float dist=length(dc);if(dist>1.04){gl_FragColor=vec4(0,0,0,0);return;}if(dist>1.0){float rim=pow(clamp(1.0-(dist-1.0)/0.04,0.0,1.0),1.5);gl_FragColor=vec4(mix(vec3(0.15,0.5,1.0),vec3(0.4,0.78,1.0),rim),rim*0.9*u_fade);return;}vec2 sph=dc;float z=sqrt(max(0.0,1.0-dot(sph,sph)));vec3 n=normalize(vec3(sph.x,sph.y,z));float lat=atan(n.y,length(n.xz));float lon=atan(n.x,n.z)+u_rot;float tu=fract(lon/6.2832+0.5);float tv=1.0-(lat/3.14159+0.5);float isLand=texture2D(u_map,vec2(tu,tv)).r;float oceanDepth=fbm(vec2(tu,tv)*4.0+vec2(2.1,1.3));vec3 col=mix(mix(vec3(0.01,0.05,0.40),vec3(0.04,0.20,0.72),oceanDepth*0.9),mix(vec3(0.05,0.15,0.45),vec3(0.10,0.28,0.62),fbm(vec2(tu,tv)*7.0+vec2(5.1,3.7))*0.35+0.65),isLand);float polar=smoothstep(0.80,0.94,abs(tv-0.5)*2.0);col=mix(col,vec3(0.78,0.90,1.0),polar);float cloud=smoothstep(0.54,0.68,fbm(vec2(tu+u_time*0.003,tv)*5.0+vec2(1.1,2.2)))*(1.0-polar*0.5);col=mix(col,vec3(0.82,0.92,1.0),cloud*0.65);vec3 light=normalize(vec3(-0.5,0.4,0.8));col*=(0.22+clamp(dot(n,light),0.0,1.0)*0.78);col+=vec3(0.04,0.18,0.60)*pow(1.0-z,4.0)*0.9;gl_FragColor=vec4(col,u_fade);}';
+  function mkS(t,s){var sh=gl.createShader(t);gl.shaderSource(sh,s);gl.compileShader(sh);return sh;}
+  var prog=gl.createProgram();
+  gl.attachShader(prog,mkS(gl.VERTEX_SHADER,VS));gl.attachShader(prog,mkS(gl.FRAGMENT_SHADER,FS));gl.linkProgram(prog);gl.useProgram(prog);
+  var buf=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
+  var ap=gl.getAttribLocation(prog,'a_pos');gl.enableVertexAttribArray(ap);gl.vertexAttribPointer(ap,2,gl.FLOAT,false,0,0);
+  gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
+  var uRot=gl.getUniformLocation(prog,'u_rot'),uTime=gl.getUniformLocation(prog,'u_time'),uFade=gl.getUniformLocation(prog,'u_fade'),uMap=gl.getUniformLocation(prog,'u_map');
+  var MW=1024,MH=512,mc=document.createElement('canvas');mc.width=MW;mc.height=MH;
+  var ctx=mc.getContext('2d');ctx.fillStyle='#000';ctx.fillRect(0,0,MW,MH);ctx.fillStyle='#fff';
+  function ll(lon,lat){return[(lon+180)/360*MW,(90-lat)/180*MH];}
+  function poly(pts){ctx.beginPath();var p0=ll(pts[0][0],pts[0][1]);ctx.moveTo(p0[0],p0[1]);for(var i=1;i<pts.length;i++){var p=ll(pts[i][0],pts[i][1]);ctx.lineTo(p[0],p[1]);}ctx.closePath();ctx.fill();}
+  poly([[-9,71],[20,78],[40,72],[60,73],[80,73],[100,68],[110,60],[120,55],[130,48],[135,40],[136,34],[130,28],[120,22],[108,18],[100,10],[100,2],[104,-2],[108,2],[110,8],[120,22],[124,14],[118,6],[112,2],[108,2],[100,10],[92,8],[82,10],[72,14],[64,22],[58,24],[46,14],[40,12],[34,20],[30,28],[24,36],[16,40],[8,44],[2,44],[-2,44],[-6,38],[-8,36],[-8,44],[-2,52],[4,54],[8,58],[14,64],[20,68],[28,70],[-9,71]]);
+  poly([[4,58],[8,62],[14,66],[20,70],[26,70],[28,64],[22,58],[14,56],[8,56],[4,58]]);
+  poly([[-6,36],[2,36],[10,38],[18,38],[32,30],[40,22],[44,12],[44,2],[40,-4],[36,-18],[28,-34],[22,-34],[16,-28],[12,-18],[10,-8],[8,4],[4,6],[2,8],[-4,6],[-12,8],[-16,12],[-18,14],[-16,20],[-18,28],[-14,32],[-6,36]]);
+  poly([[-168,68],[-140,60],[-128,50],[-124,38],[-118,34],[-96,18],[-86,14],[-84,10],[-78,8],[-76,8],[-72,10],[-68,12],[-64,18],[-60,24],[-60,34],[-66,44],[-70,46],[-68,48],[-62,46],[-60,46],[-64,48],[-68,52],[-72,56],[-78,62],[-86,66],[-92,70],[-100,70],[-120,70],[-140,70],[-160,70],[-168,68]]);
+  poly([[-80,10],[-72,-2],[-64,-8],[-52,-4],[-46,-14],[-40,-22],[-44,-34],[-66,-56],[-68,-52],[-62,-38],[-56,-28],[-52,-18],[-64,-4],[-72,2],[-76,8],[-80,10]]);
+  poly([[114,-22],[122,-18],[130,-14],[138,-12],[148,-18],[154,-26],[152,-36],[144,-38],[136,-34],[128,-32],[120,-30],[114,-26],[114,-22]]);
+  poly([[130,31],[131,32],[132,34],[133,34],[134,34],[135,34],[136,36],[137,36],[138,38],[139,40],[140,40],[141,41],[141,40],[140,38],[138,36],[136,34],[135,34],[134,32],[132,32],[130,31]]);
+  poly([[140,42],[142,44],[144,44],[145,44],[145,42],[142,42],[140,42]]);
+  var px=ctx.getImageData(0,0,MW,MH).data;
+  var tex=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,tex);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,MW,MH,0,gl.RGBA,gl.UNSIGNED_BYTE,px);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.REPEAT);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+    var rotDeg=139,running=false,startTime=performance.now();
+    function render(){
+      if(!running)return;
+      var t=(performance.now()-startTime)/1000,fade=Math.min(1,t/0.8);
+      gl.viewport(0,0,SIZE,SIZE);gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,tex);gl.uniform1i(uMap,0);
+      gl.uniform1f(uRot,rotDeg*Math.PI/180);gl.uniform1f(uTime,t);gl.uniform1f(uFade,fade);
+      gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+      requestAnimationFrame(render);
+    }
+    return{
+      setRot:function(d){rotDeg=d;},
+      getRot:function(){return rotDeg;},
+      start:function(){if(running)return;running=true;startTime=performance.now();requestAnimationFrame(render);},
+      stop:function(){running=false;}
+    };
+  }
+
+  // ---- 球面の正射影（シェーダの u_rot と同じ向きに合わせてある）----
+  //   画面中央の経度 = rot。alt は地球半径に対する高さ。
+  function proj(la,ln,alt,rot,cx,cy,R){
+    var p=la*D,lam=(ln-rot)*D,r=1+(alt||0);
+    var x=Math.cos(p)*Math.sin(lam)*r,y=Math.sin(p)*r,z=Math.cos(p)*Math.cos(lam)*r;
+    return{x:cx+x*R,y:cy-y*R,z:z,vis:!((z<=0)&&((x*x+y*y)<1))};
+  }
+  function unit(la,ln){
+    var p=la*D,l=ln*D;
+    return[Math.cos(p)*Math.sin(l),Math.sin(p),Math.cos(p)*Math.cos(l)];
+  }
+  // ---- 大圏コースを持ち上げた放物線 ----
+  function arcPts(a,b,n,hMax){
+    var u=unit(a.la,a.ln),v=unit(b.la,b.ln),i;
+    var dot=Math.max(-1,Math.min(1,u[0]*v[0]+u[1]*v[1]+u[2]*v[2]));
+    var om=Math.acos(dot),so=Math.sin(om),out=[];
+    for(i=0;i<=n;i++){
+      var t=i/n,c1,c2;
+      if(so<1e-6){c1=1-t;c2=t;}else{c1=Math.sin((1-t)*om)/so;c2=Math.sin(t*om)/so;}
+      var w=[u[0]*c1+v[0]*c2,u[1]*c1+v[1]*c2,u[2]*c1+v[2]*c2];
+      var L=Math.sqrt(w[0]*w[0]+w[1]*w[1]+w[2]*w[2]);
+      if(L<1e-9)L=1e-9;
+      w=[w[0]/L,w[1]/L,w[2]/L];
+      out.push({
+        la:Math.asin(Math.max(-1,Math.min(1,w[1])))/D,
+        ln:Math.atan2(w[0],w[2])/D,
+        alt:hMax*Math.sin(Math.PI*t)
+      });
+    }
+    return out;
+  }
+  // ---- 地球儀の回転角の並び（±180度でジャンプしないよう連続化）----
+  function buildRot(pts){
+    var seq=[pts[0].ln],prev=pts[0].ln,i;
+    for(i=1;i<pts.length;i++){
+      var v=pts[i].ln;
+      while(v-prev>180)v-=360;
+      while(v-prev<-180)v+=360;
+      seq.push(v);prev=v;
+    }
+    return seq;
+  }
+
+  function drawPlane(ctx,x,y,ang,s){
+    ctx.save();ctx.translate(x,y);ctx.rotate(ang);
+    ctx.shadowColor='rgba(255,235,140,0.95)';ctx.shadowBlur=16;
+    ctx.fillStyle='#fff8d0';
+    ctx.beginPath();
+    ctx.moveTo(s,0);ctx.lineTo(-s*0.35,s*0.26);ctx.lineTo(-s*0.16,0);ctx.lineTo(-s*0.35,-s*0.26);
+    ctx.closePath();ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(s*0.12,0);ctx.lineTo(-s*0.52,s*0.72);ctx.lineTo(-s*0.26,s*0.08);
+    ctx.lineTo(-s*0.26,-s*0.08);ctx.lineTo(-s*0.52,-s*0.72);
+    ctx.closePath();ctx.fill();
+    ctx.restore();
+  }
+
+  function label(ctx,x,y,txt,color,dy){
+    ctx.save();
+    ctx.font='600 12px "Share Tech Mono",monospace';
+    ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.shadowColor='rgba(0,0,0,0.9)';ctx.shadowBlur=6;
+    ctx.fillStyle=color;
+    ctx.fillText(txt,x,y+dy);
+    ctx.restore();
+  }
+
+  // ---- 放物線を描きながら地球儀を回す ----
+  function drawArc(p,destName){
+    if(!arcCtx)return;
+    lastP=p;lastName=destName||'';
+    var box=G.box,R=box/2*0.995,cx=box/2,cy=box/2,i;
+    arcCtx.setTransform(G.dpr,0,0,G.dpr,0,0);
+    arcCtx.clearRect(0,0,box,box);
+    var last=PTS.length-1;
+    var idx=Math.max(1,Math.min(last,Math.round(p*last)));
+    var rot=ROT[idx];
+    if(GLOBE)GLOBE.setRot(rot);
+
+    arcCtx.lineCap='round';arcCtx.lineJoin='round';
+    var pass;
+    for(pass=0;pass<2;pass++){
+      arcCtx.beginPath();
+      var pen=false;
+      for(i=0;i<=idx;i++){
+        var q=proj(PTS[i].la,PTS[i].ln,PTS[i].alt,rot,cx,cy,R);
+        if(!q.vis){pen=false;continue;}
+        if(!pen){arcCtx.moveTo(q.x,q.y);pen=true;}else{arcCtx.lineTo(q.x,q.y);}
+      }
+      if(pass===0){
+        arcCtx.strokeStyle='rgba(255,200,0,0.22)';arcCtx.lineWidth=10;
+        arcCtx.shadowColor='rgba(255,200,0,0.85)';arcCtx.shadowBlur=18;
+      }else{
+        arcCtx.strokeStyle='#ffe45c';arcCtx.lineWidth=3;arcCtx.shadowBlur=8;
+      }
+      arcCtx.stroke();
+    }
+    arcCtx.shadowBlur=0;
+
+    // 出発した空港
+    var s0=proj(PTS[0].la,PTS[0].ln,0,rot,cx,cy,R);
+    if(s0.vis){
+      arcCtx.save();
+      arcCtx.fillStyle='rgba(0,220,255,0.95)';
+      arcCtx.shadowColor='rgba(0,200,255,0.9)';arcCtx.shadowBlur=12;
+      arcCtx.beginPath();arcCtx.arc(s0.x,s0.y,4,0,Math.PI*2);arcCtx.fill();
+      arcCtx.restore();
+    }
+    // 目的地
+    var s1=proj(PTS[last].la,PTS[last].ln,0,rot,cx,cy,R);
+    if(s1.vis){
+      var pulse=1+0.35*Math.sin(performance.now()/260);
+      arcCtx.save();
+      arcCtx.strokeStyle='rgba(255,220,90,0.95)';arcCtx.lineWidth=2;
+      arcCtx.shadowColor='rgba(255,200,0,0.9)';arcCtx.shadowBlur=14;
+      arcCtx.beginPath();arcCtx.arc(s1.x,s1.y,6*pulse,0,Math.PI*2);arcCtx.stroke();
+      arcCtx.beginPath();arcCtx.arc(s1.x,s1.y,2.5,0,Math.PI*2);
+      arcCtx.fillStyle='rgba(255,235,150,1)';arcCtx.fill();
+      arcCtx.restore();
+      if(p>0.55&&destName)label(arcCtx,s1.x,s1.y,destName,'rgba(255,235,150,0.95)',-16);
+    }
+    // 飛行機
+    if(p<0.999){
+      var h=proj(PTS[idx].la,PTS[idx].ln,PTS[idx].alt,rot,cx,cy,R);
+      var j=Math.max(0,idx-2);
+      var h2=proj(PTS[j].la,PTS[j].ln,PTS[j].alt,rot,cx,cy,R);
+      if(h.vis){
+        var ang=Math.atan2(h.y-h2.y,h.x-h2.x);
+        drawPlane(arcCtx,h.x,h.y,ang,Math.max(9,box*0.032));
+      }
+    }
+  }
+
+  function runArc(destName,cb){
+    var t0=performance.now();
+    function step(){
+      var p=Math.min(1,(performance.now()-t0)/T_ARC);
+      var e=p<0.5?2*p*p:-1+(4-2*p)*p;      // ゆっくり始まってゆっくり終わる
+      drawArc(e,destName);
+      if(p<1){raf=requestAnimationFrame(step);}
+      else{raf=0;cb();}
+    }
+    raf=requestAnimationFrame(step);
+  }
+
+  // ---- 空港までの青線（予告編の1枚目）----
+  function drawRouteMap(o,target,best,cb){
+    var fired=false;
+    function once(){if(fired)return;fired=true;cb();}
+    var wd=after(9000,once);
+    try{
+      var el=$('intl-map');el.innerHTML='';
+      var map=new google.maps.Map(el,{
+        center:{lat:(o.la+target.lat)/2,lng:(o.ln+target.lng)/2},
+        zoom:9,mapTypeId:'roadmap',disableDefaultUI:true,gestureHandling:'none',
+        keyboardShortcuts:false,clickableIcons:false,styles:MAPSTYLE,backgroundColor:'#04101e'
+      });
+      el.style.opacity='1';
+      var bounds=new google.maps.LatLngBounds();
+      var a=new google.maps.LatLng(o.la,o.ln),b=new google.maps.LatLng(target.lat,target.lng);
+      var path=(best&&best.route&&best.route.overview_path)?best.route.overview_path:null;
+      if(path&&path.length){
+        // 空港選定で取得済みの経路をそのまま描く（ルート取得は増やさない）
+        new google.maps.Polyline({path:path,map:map,strokeColor:'#0a3a6a',strokeOpacity:0.9,strokeWeight:11,zIndex:1});
+        new google.maps.Polyline({path:path,map:map,strokeColor:'#00a2ff',strokeOpacity:1,strokeWeight:6,zIndex:2});
+        for(var i=0;i<path.length;i++)bounds.extend(path[i]);
+      }else{
+        log('intl-route',{r:'no-path'});
+        new google.maps.Polyline({path:[a,b],map:map,strokeColor:'#00a2ff',strokeOpacity:0.8,strokeWeight:4,zIndex:2});
+      }
+      bounds.extend(a);bounds.extend(b);
+      new google.maps.Marker({position:a,map:map,
+        icon:{path:google.maps.SymbolPath.CIRCLE,scale:7,fillColor:'#00e0ff',fillOpacity:1,strokeColor:'#ffffff',strokeWeight:2}});
+      new google.maps.Marker({position:b,map:map,
+        label:{text:'✈',color:'#04101e',fontSize:'14px',fontWeight:'700'},
+        icon:{path:google.maps.SymbolPath.CIRCLE,scale:12,fillColor:'#ffe45c',fillOpacity:1,strokeColor:'#ffffff',strokeWeight:2}});
+      try{map.fitBounds(bounds,{top:120,bottom:130,left:50,right:50});}catch(e2){map.fitBounds(bounds);}
+      // 地図の描画が始まるのを少し待ってから次の段へ
+      after(700,once);
+    }catch(e){clearTimeout(wd);log('intl-route',{r:'exception'});once();}
+  }
+
+  function zoomIn(destGeo,cb){
+    var box=G.box,R=box/2*0.995,cx=box/2,cy=box/2;
+    var q=proj(destGeo.lat,destGeo.lng,0,GLOBE?GLOBE.getRot():destGeo.lng,cx,cy,R);
+    var el=$('intl-globe-box');
+    el.style.transformOrigin=q.x.toFixed(1)+'px '+q.y.toFixed(1)+'px';
+    el.style.transition='transform '+(T_ZOOM/1000).toFixed(2)+'s cubic-bezier(0.4,0,0.2,1)';
+    void el.offsetWidth;
+    el.style.transform='scale(9)';
+    after(Math.round(T_ZOOM*0.55),function(){var f=$('intl-flash');if(f)f.style.opacity='1';});
+    after(T_ZOOM,cb);
+  }
+
+  function show(){
+    build();
+    sizeBox();
+    var d=$('intl-prev');
+    d.classList.add('on');
+    $('intl-map').style.opacity='0';
+    $('intl-map').innerHTML='';
+    $('intl-flash').style.opacity='0';
+    var box=$('intl-globe-box');
+    box.style.transition='opacity .9s ease';
+    box.style.transform='none';box.style.opacity='0';
+    if(!GLOBE){
+      GLOBE=makeGlobe($('intl-globe-cv'));
+      arcCv=$('intl-arc-cv');
+      arcCv.width=Math.round(G.box*G.dpr);arcCv.height=Math.round(G.box*G.dpr);
+      arcCtx=arcCv.getContext('2d');
+    }
+    if(GLOBE)GLOBE.start();
+    setHud('','');
+  }
+  function hide(){
+    if(!built)return;
+    var d=$('intl-prev');
+    d.classList.remove('on');
+    var box=$('intl-globe-box');
+    box.style.transition='none';box.style.transform='none';box.style.opacity='0';
+    $('intl-flash').style.opacity='0';
+    $('intl-map').innerHTML='';
+    if(GLOBE)GLOBE.stop();
+    M._busy=false;
+  }
+  M._hide=hide;
+
+  M._abort=function(msg){
+    clearAll();hide();
+    M._busy=false;M._skip=null;
+    try{setStatus('OVERSEAS: 中止しました');}catch(e){}
+    try{showAiBubble(msg);}catch(e){}
+    say(msg);
+    log('intl-abort',{m:String(msg).slice(0,24)});
+  };
+
+  // ============================ 入口 ============================
+  M.startOverseas=function(destName,destGeo){
+    if(M._busy)return;
+    M._busy=true;M._handed=false;
+    log('intl-start',{d:String(destName).slice(0,20)});
+    try{setStatus('OVERSEAS: 空路が必要です');}catch(e){}
+    show();
+    setHud('OVERSEAS ROUTE','最寄りの国際空港を検索しています...');
+    say('目的地は海外です。最寄りの国際空港を調べます。');
+    // 検索中に SKIP を押したら、演出ごと中止して入力画面に戻す
+    M._skip=function(){M._abort('海外の案内を中止しました。');};
+    loadMapsApi(function(ok){
+      if(!ok){M._abort('地図APIを読み込めませんでした。APIキーを確認してください。');return;}
+      setHud('OVERSEAS ROUTE','現在地を取得しています...');
+      M._fix(function(o){
+        if(!o){M._abort('現在地が取得できないため、最寄りの空港を選べません。位置情報を許可してください。');return;}
+        setHud('OVERSEAS ROUTE','空港までの所要時間を比べています...');
+        M.pickAirport(o,function(best){
+          if(!best){M._abort('近くの国際空港が見つかりませんでした。');return;}
+          M.findParking(best.ap,function(pk){
+            var target={lat:pk.lat,lng:pk.lng,addr:pk.addr||best.ap.n};
+            var label2=best.ap.n+(pk.isPark?' 駐車場':'');
+            // v02（空港到着後のガイド）で使う情報をここで残しておく
+            M.trip={dest:destName,destGeo:destGeo,ap:best.ap,target:target,label:label2,mode:'air',t:Date.now()};
+            try{STATE.intlTrip=M.trip;localStorage.setItem('ainavi_intl',JSON.stringify(M.trip));}catch(e){}
+            play(o,best,target,label2,destName,destGeo);
+          });
+        });
+      });
+    });
+  };
+
+  function play(o,best,target,label2,destName,destGeo){
+    var ap=best.ap;
+    PTS=arcPts({la:ap.la,ln:ap.ln},{la:destGeo.lat,ln:destGeo.lng},ARC_N,ARC_ALT);
+    ROT=buildRot(PTS);
+    var gcKm=hav({la:ap.la,ln:ap.ln},{la:destGeo.lat,ln:destGeo.lng})/1000;
+
+    function handoff(){
+      if(M._handed)return;
+      M._handed=true;
+      clearAll();M._skip=null;
+      log('intl-handoff',{ap:ap.n});
+      try{
+        startZoomFlow(label2,'live',{lat:target.lat,lng:target.lng,addr:target.addr});
+      }catch(e){
+        M._abort('案内を開始できませんでした。');return;
+      }
+      setTimeout(function(){hide();},3000);   // 地図が出てから予告編を消す
+    }
+    M._skip=function(){clearAll();handoff();};
+
+    var durTxt=best.durText||'';
+    setHud('最寄りの国際空港','✈ '+ap.n+(durTxt?' / 車で約'+durTxt:'')+(best.distText?'（'+best.distText+'）':''));
+    say('目的地は海外です。まず、'+(durTxt?'車でおよそ'+durTxt+'の':'')+ap.n+'へご案内します。');
+
+    drawRouteMap(o,target,best,function(){
+      after(T_MAP_HOLD,function(){
+        // 地図 → 地球儀
+        if(GLOBE)GLOBE.setRot(ROT[0]);
+        drawArc(0,destName);
+        $('intl-map').style.opacity='0';
+        $('intl-globe-box').style.opacity='1';
+        setHud(destName,'約'+comma(gcKm)+'km — 空路で向かいます');
+        after(T_FADE,function(){
+          runArc(destName,function(){
+            after(T_HOLD,function(){
+              zoomIn(destGeo,handoff);
+            });
+          });
+        });
+      });
+    });
+  }
+
+  return M;
+})();
+
 </script>
 </body>
 </html>
