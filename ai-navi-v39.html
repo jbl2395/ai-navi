@@ -3520,7 +3520,7 @@ function chatExecuteDest(cand, isWaypoint){
     STATE.currentGeoData=geoData;
     STATE.currentDestTypes=cand.types||null;
     speakTTSOnly(cand.name+'へ案内を開始します。');
-    globe.rotateToTarget(-geoData.lng);
+    globe.rotateToTarget(geoData.lng);
     setTimeout(function(){ startZoomFlow(cand.name,'live',geoData); }, 2200);
   }
 }
@@ -3732,7 +3732,7 @@ function processConfirmYes(){
   if(flow === 'confirm_dest'){
     STATE.currentDest = data.placeName;
     STATE.currentGeoData = data.geoData;
-    globe.rotateToTarget(-data.geoData.lng);
+    globe.rotateToTarget(data.geoData.lng);
     setTimeout(function(){ startZoomFlow(data.placeName, 'live', data.geoData); }, 2200);
   } else if(flow === 'confirm_waypoint'){
     // 経由地: 現在のナビに割り込み
@@ -3750,7 +3750,7 @@ function processConfirmYes(){
     } else {
       STATE.currentDest = data.placeName;
       STATE.currentGeoData = data.geoData;
-      globe.rotateToTarget(-data.geoData.lng);
+      globe.rotateToTarget(data.geoData.lng);
       setTimeout(function(){ startZoomFlow(data.placeName, 'live', data.geoData); }, 2200);
     }
   }
@@ -6506,14 +6506,14 @@ function geocodeAndNavigate(dest){
         if(typeof INTL!=='undefined'&&INTL.ENABLE){
           INTL.route(dest,{lat:loc.lat,lng:loc.lng,addr:addr},data.results[0],function(){
             speakTTS('目的地を'+dest+'に設定しました。'); // ★従来どおりの確定発話
-            globe.rotateToTarget(-loc.lng);
+            globe.rotateToTarget(loc.lng);
             setTimeout(function(){startZoomFlow(dest,'live',{lat:loc.lat,lng:loc.lng,addr:addr});},2200);
           });
           return;
         }
       }catch(_intlE){try{INTL._abort('海外・離島の判定に失敗しました。');}catch(_e2){}}
       speakTTS('目的地を'+dest+'に設定しました。'); // ★メインホーム入力時の確定発話
-      globe.rotateToTarget(-loc.lng);
+      globe.rotateToTarget(loc.lng);
       setTimeout(function(){startZoomFlow(dest,'live',{lat:loc.lat,lng:loc.lng,addr:addr});},2200);
     }else{
       setStatus('NOT FOUND: 見つかりませんでした');
@@ -11968,7 +11968,7 @@ var INTL=(function(){
     log('fry-board',{a:M.ferry.na});
     try{exitNav();}catch(e){}
     openSail();
-    say(M.ferry.na+'に到着しました。乗船してください。乗船中もこのまま現在地を表示します。');
+    sayArrive(M.ferry.na+'に到着しました。手続きガイドで案内します。乗船してください。乗船中もこのまま現在地を表示します。');
   }
 
   // ---- 乗船中の画面 ----
@@ -12063,11 +12063,11 @@ var INTL=(function(){
     f.arrSpoken=true;saveFerry();
     $('fry-go').classList.add('on');
     if(kind==='soon'){
-      $('fry-top-s').textContent='まもなく '+f.nb+' に到着します';
+      $('fry-top-s').textContent='まもなく '+f.nb+' に到着します — 案内開始を押してください';
       say('まもなく'+f.nb+'に到着します。');
     }else{
-      $('fry-top-s').textContent=f.nb+' に到着しました';
-      say(f.nb+'に到着しました。');
+      $('fry-top-s').textContent=f.nb+' に到着しました — 案内開始を押してください';
+      say(f.nb+'に到着しました。道路案内を再開します。');
     }
     log('fry-arrive',{k:kind,b:f.nb});
   }
@@ -12172,6 +12172,406 @@ var INTL=(function(){
     });
     window.addEventListener('pagehide',function(){clearNowPlaying();});
   }catch(e){}
+
+
+  // ==========================================================================
+  // ★v07 空港到着後の手続きガイド / 飛行中の表示 / 到着後のガイド
+  //   ・既存の関数は書き換えない。M.startOverseas は「包む」だけで中身は触らない。
+  //   ・M.GUIDE_ENABLE=false で、この機能だけ止めて v06 と同じ動作に戻せる。
+  //   ・本体の到着発話（「目的地に到着しました。…」）は、この旅程の間だけ
+  //     speakTTS を包んで飲み込み、代わりに「〇〇空港に到着しました。手続きガイドで
+  //     案内します。」を言う。speakTTS 自体は書き換えない。
+  // ==========================================================================
+  M.GUIDE_ENABLE=true;
+
+  var GKEY='ainavi_guide';
+  var AP_NEAR_M=300;                  // 空港（駐車場）に着いたとみなす距離
+  var GUIDE_TTL_STEP=24*3600*1000;    // 手順ガイド中の保存期限
+  var GUIDE_TTL_FLY=72*3600*1000;     // 搭乗後の保存期限
+  var GPS_FRESH_MS=60000;             // これより古い位置は使わず時間ベースに落とす
+  var CRUISE_KMH=900;                 // 推定飛行時間の巡航速度
+  var FLY_EXTRA_MIN=30;               // 離着陸ぶんの上乗せ
+  var ARRIVE_KM=50;                   // 目的地にこれだけ近づいたら到着とみなす
+  var ARR_SAY_WAIT=6600;              // 本体が到着発話を出した直後に喋るときの待ち
+
+  var GD={wid:null,lat:null,lng:null,posAt:0,built:false,saveAt:0,tick:null,skipTxt:null};
+  var _arrSayDelay=0;   // >0 のとき、到着の発話をこの時間だけ遅らせる
+
+  // 本体の到着発話のあとに喋るときは、本体が仕込んだ exitNav(6秒後)の
+  // speechSynthesis.cancel() に切られないよう、少し待ってから喋る。
+  function sayArrive(t){
+    if(_arrSayDelay>0){
+      var w=_arrSayDelay;_arrSayDelay=0;
+      setTimeout(function(){say(t);},w);
+    }else{
+      say(t);
+    }
+  }
+
+  // ---- 手順表（出発＝チェックイン〜搭乗 / 到着＝搭乗と逆順）----
+  function stepsOf(stage,dom){
+    if(stage==='dep'){
+      var dep=[
+        {t:'チェックイン',d:'航空会社のカウンターか自動チェックイン機で、搭乗手続きをしてください。',s:'まず、チェックインカウンターで搭乗手続きをしてください。'},
+        {t:'手荷物預け',d:'預ける荷物をカウンターで預け、引換証を受け取ってください。',s:'次に、預ける荷物をカウンターで預けてください。'},
+        {t:'保安検査',d:'搭乗券を用意して、保安検査場を通ってください。',s:'次に、搭乗券を用意して、保安検査場を通ってください。'},
+        {t:'出国審査',d:'パスポートと搭乗券を用意して、出国審査を受けてください。',s:'次に、パスポートを用意して、出国審査を受けてください。'},
+        {t:'搭乗ゲート',d:'搭乗券に書かれたゲートへ移動して、案内を待ってください。',s:'次に、搭乗券に書かれたゲートへ移動してください。'},
+        {t:'搭乗',d:'案内があったら搭乗してください。乗り込んだら下のボタンを押してください。',s:'案内があったら搭乗してください。乗り込んだら、搭乗しましたを押してください。'}
+      ];
+      if(dom)dep.splice(3,1);          // 国内線は出国審査なし
+      return dep;
+    }
+    var arr=[
+      {t:'入国審査',d:'パスポートを用意して、入国審査を受けてください。',s:'パスポートを用意して、入国審査を受けてください。'},
+      {t:'手荷物受取',d:'ターンテーブルで、預けた荷物を受け取ってください。',s:'次に、ターンテーブルで預けた荷物を受け取ってください。'},
+      {t:'税関',d:'申告するものがあれば申告して、税関を通ってください。',s:'次に、税関を通ってください。'},
+      {t:'到着ロビー',d:'到着ロビーへ出てください。ここまでで手続きの案内は終わりです。',s:'最後に、到着ロビーへ出てください。'}
+    ];
+    if(dom){arr.splice(2,1);arr.splice(0,1);}   // 国内線は入国審査・税関なし
+    return arr;
+  }
+
+  // ---- 保存 / 復帰 ----
+  function saveGuide(){
+    try{if(M.guide)localStorage.setItem(GKEY,JSON.stringify(M.guide));}catch(e){}
+  }
+  function clearGuide(){
+    M.guide=null;
+    try{localStorage.removeItem(GKEY);}catch(e){}
+  }
+  function loadGuide(){
+    try{
+      var r=localStorage.getItem(GKEY);if(!r)return null;
+      var o=JSON.parse(r);if(!o||!o.stage)return null;
+      var ttl=(o.stage==='fly')?GUIDE_TTL_FLY:GUIDE_TTL_STEP;
+      if(Date.now()-(o.t||0)>ttl){try{localStorage.removeItem(GKEY);}catch(e2){}return null;}
+      return o;
+    }catch(e){return null;}
+  }
+
+  // ---- 位置の見張り（本体の案内とは別に、この旅程の間だけ動かす）----
+  function startGWatch(){
+    if(GD.wid!==null)return;
+    if(!navigator.geolocation)return;
+    try{
+      GD.wid=navigator.geolocation.watchPosition(onGPos,function(){},
+        {enableHighAccuracy:true,timeout:20000,maximumAge:5000});
+    }catch(e){GD.wid=null;}
+  }
+  function stopGWatch(){
+    if(GD.wid===null)return;
+    try{navigator.geolocation.clearWatch(GD.wid);}catch(e){}
+    GD.wid=null;
+  }
+  function onGPos(p){
+    GD.lat=p.coords.latitude;GD.lng=p.coords.longitude;GD.posAt=Date.now();
+    var g=M.guide;if(!g)return;
+    if(g.stage==='drive'){
+      if(hav({la:GD.lat,ln:GD.lng},{la:g.target.lat,ln:g.target.lng})<=AP_NEAR_M)enterDep();
+      return;
+    }
+    if(g.stage==='fly'){
+      drawFly();
+      if(Date.now()-GD.saveAt>30000){GD.saveAt=Date.now();g.t=Date.now();saveGuide();}
+    }
+  }
+
+  // ---- 空港に到着 → 出発手続きのガイドへ ----
+  function enterDep(){
+    var g=M.guide;if(!g||g.stage!=='drive')return;
+    g.stage='dep';g.idx=0;g.t=Date.now();saveGuide();
+    log('gd-dep',{ap:g.ap.n});
+    try{exitNav();}catch(e){}
+    try{if(typeof WALK!=='undefined'&&WALK.setEnabled)WALK.setEnabled(true);}catch(e){}   // 徒歩モードへ
+    openStep();
+    var st=stepsOf('dep',g.dom)[0];
+    // 到着の発話と1つ目の手順は、切れないように1回の発話にまとめる
+    sayArrive(g.ap.n+'に到着しました。手続きガイドで案内します。'+st.s);
+  }
+
+  // ---- 手順の画面 ----
+  var GCSS=''+
+  '#gd-wrap{position:fixed;inset:0;z-index:9100;background:radial-gradient(circle at 50% 0%,#0b2440,#04101e 70%);display:none;}'+
+  '#gd-wrap.on{display:flex;align-items:center;justify-content:center;}'+
+  '#gd-card{width:min(520px,92vw);max-height:86vh;overflow:auto;background:rgba(4,16,30,0.96);border:1px solid rgba(0,200,255,0.35);border-radius:18px;padding:20px 18px 18px;box-shadow:0 0 40px rgba(0,120,220,0.35);}'+
+  '#gd-top{font-family:"Orbitron",sans-serif;font-size:12px;letter-spacing:0.14em;color:#7fe0ff;text-align:center;}'+
+  '#gd-num{margin-top:14px;font-family:"Share Tech Mono",monospace;font-size:12px;color:rgba(255,220,120,0.95);text-align:center;letter-spacing:0.1em;}'+
+  '#gd-bar{margin:8px auto 0;height:5px;width:100%;background:rgba(255,255,255,0.12);border-radius:3px;overflow:hidden;}'+
+  '#gd-bar>i{display:block;height:100%;width:0%;background:linear-gradient(90deg,#00d8ff,#ffe45c);transition:width .35s ease;}'+
+  '#gd-step{margin-top:18px;font-size:clamp(22px,6.4vw,30px);font-weight:700;color:#fff;text-align:center;text-shadow:0 0 14px rgba(0,200,255,0.5);}'+
+  '#gd-desc{margin-top:12px;font-size:clamp(13px,3.6vw,15px);line-height:1.75;color:rgba(255,255,255,0.86);text-align:left;}'+
+  '#gd-btns{margin-top:22px;display:flex;gap:10px;}'+
+  '#gd-back{flex:0 0 34%;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.22);color:rgba(255,255,255,0.86);border-radius:12px;padding:14px 0;font-size:14px;cursor:pointer;}'+
+  '#gd-next{flex:1 1 auto;background:linear-gradient(180deg,#0a6fa8,#0a4f7a);border:1px solid rgba(0,220,255,0.55);color:#eaffff;border-radius:12px;padding:14px 0;font-size:16px;font-weight:700;cursor:pointer;}'+
+  '#gd-back:active,#gd-next:active{transform:scale(0.97);}'+
+  '#gd-back[disabled]{opacity:0.35;}'+
+  '#gd-quit{margin-top:14px;width:100%;background:none;border:none;color:rgba(255,255,255,0.42);font-size:12px;text-decoration:underline;cursor:pointer;}';
+
+  function buildGuideDom(){
+    if(GD.built)return;
+    GD.built=true;
+    var st=document.createElement('style');st.type='text/css';
+    st.appendChild(document.createTextNode(GCSS));document.head.appendChild(st);
+    var d=document.createElement('div');d.id='gd-wrap';
+    d.innerHTML=''+
+      '<div id="gd-card">'+
+        '<div id="gd-top"></div>'+
+        '<div id="gd-bar"><i></i></div>'+
+        '<div id="gd-num"></div>'+
+        '<div id="gd-step"></div>'+
+        '<div id="gd-desc"></div>'+
+        '<div id="gd-btns">'+
+          '<button id="gd-back" type="button">← 戻る</button>'+
+          '<button id="gd-next" type="button">OK 次へ</button>'+
+        '</div>'+
+        '<button id="gd-quit" type="button">ガイドを終了する</button>'+
+      '</div>';
+    document.body.appendChild(d);
+    $('gd-next').addEventListener('click',onNext);
+    $('gd-back').addEventListener('click',onBack);
+    $('gd-quit').addEventListener('click',onQuit);
+  }
+  function openStep(){
+    buildGuideDom();
+    M._busy=true;                       // 画面を離れても喋れるように（ロック画面の解放を止める）
+    $('gd-wrap').classList.add('on');
+    renderStep();
+  }
+  function closeStep(){
+    if(!GD.built)return;
+    $('gd-wrap').classList.remove('on');
+  }
+  function renderStep(){
+    var g=M.guide;if(!g)return;
+    var list=stepsOf(g.stage,g.dom);
+    if(g.idx<0)g.idx=0;
+    if(g.idx>=list.length)g.idx=list.length-1;
+    var st=list[g.idx],last=(g.idx===list.length-1);
+    $('gd-top').textContent=(g.stage==='dep'?'✈ '+g.ap.n+' — 出発手続き':'✈ '+g.dest+' — 到着手続き');
+    $('gd-num').textContent=(g.idx+1)+' / '+list.length;
+    $('gd-bar').getElementsByTagName('i')[0].style.width=Math.round((g.idx+1)/list.length*100)+'%';
+    $('gd-step').textContent=st.t;
+    $('gd-desc').textContent=st.d;
+    $('gd-back').disabled=(g.idx===0);
+    $('gd-next').textContent=last?(g.stage==='dep'?'搭乗しました':'終了する'):'OK 次へ';
+  }
+  function onNext(){
+    var g=M.guide;if(!g)return;
+    var list=stepsOf(g.stage,g.dom);
+    if(g.idx>=list.length-1){
+      if(g.stage==='dep'){enterFly();}else{finishGuide();}
+      return;
+    }
+    g.idx++;g.t=Date.now();saveGuide();
+    renderStep();
+    say(list[g.idx].s);
+    log('gd-step',{s:g.stage,i:g.idx});
+  }
+  function onBack(){
+    var g=M.guide;if(!g||g.idx<=0)return;
+    g.idx--;g.t=Date.now();saveGuide();
+    renderStep();
+    say(stepsOf(g.stage,g.dom)[g.idx].s);
+    log('gd-back',{s:g.stage,i:g.idx});
+  }
+  function onQuit(){
+    if(!window.confirm('手続きガイドを終了しますか？'))return;
+    quitGuide('手続きガイドを終了しました。');
+  }
+  function quitGuide(msg){
+    stopGWatch();clearGuide();
+    if(GD.tick){clearInterval(GD.tick);GD.tick=null;}
+    closeStep();closeFly();
+    M._busy=false;
+    if(msg){try{setStatus('GUIDE: 終了しました');}catch(e){}say(msg);}
+    log('gd-quit',{});
+  }
+  M._guideQuit=function(){quitGuide('');};
+
+  // ---- 搭乗 → 飛行中の画面 ----
+  function enterFly(){
+    var g=M.guide;if(!g)return;
+    var gcKm=hav({la:g.ap.la,ln:g.ap.ln},{la:g.destGeo.lat,ln:g.destGeo.lng})/1000;
+    g.stage='fly';g.idx=0;g.boardAt=Date.now();
+    g.gcKm=gcKm;
+    g.flyMin=Math.max(20,Math.round(gcKm/CRUISE_KMH*60+FLY_EXTRA_MIN));
+    g.t=Date.now();saveGuide();
+    log('gd-fly',{km:Math.round(gcKm),min:g.flyMin});
+    closeStep();
+    openFly();
+    say('搭乗を確認しました。到着まで、この画面で現在地をお知らせします。');
+  }
+  function openFly(){
+    var g=M.guide;if(!g)return;
+    PTS=arcPts({la:g.ap.la,ln:g.ap.ln},{la:g.destGeo.lat,ln:g.destGeo.lng},ARC_N,ARC_ALT);
+    ROT=buildRot(PTS);
+    show();
+    M._busy=true;
+    $('intl-map').style.opacity='0';
+    $('intl-globe-box').style.opacity='1';
+    if(GD.skipTxt===null){try{GD.skipTxt=$('intl-skip').textContent;}catch(e){GD.skipTxt='SKIP ▶';}}
+    try{$('intl-skip').textContent='ガイド終了';}catch(e){}
+    M._skip=function(){onQuit();};
+    startGWatch();
+    drawFly();
+    if(GD.tick){clearInterval(GD.tick);}
+    GD.tick=setInterval(drawFly,1000);
+  }
+  function closeFly(){
+    if(GD.tick){clearInterval(GD.tick);GD.tick=null;}
+    try{if(GD.skipTxt!==null)$('intl-skip').textContent=GD.skipTxt;}catch(e){}
+    M._skip=null;
+    try{hide();}catch(e){}
+  }
+  // 進み具合。GPSが新しければ大圏コース上の最寄り点、そうでなければ搭乗からの経過時間。
+  function flyState(){
+    var g=M.guide,i,best=0,bestD=Infinity,src='time',p=0;
+    var fresh=(GD.lat!==null&&GD.posAt&&(Date.now()-GD.posAt)<GPS_FRESH_MS);
+    if(fresh&&PTS&&PTS.length>1){
+      for(i=0;i<PTS.length;i++){
+        var d=hav({la:GD.lat,ln:GD.lng},{la:PTS[i].la,ln:PTS[i].ln});
+        if(d<bestD){bestD=d;best=i;}
+      }
+      p=best/(PTS.length-1);src='gps';
+    }else{
+      var el=(Date.now()-(g.boardAt||Date.now()))/60000;
+      p=g.flyMin>0?(el/g.flyMin):0;src='time';
+    }
+    if(p<0)p=0;if(p>1)p=1;
+    return {p:p,src:src,pct:Math.round(p*100),restKm:Math.max(0,(g.gcKm||0)*(1-p))};
+  }
+  function drawFly(){
+    var g=M.guide;if(!g||g.stage!=='fly')return;
+    var s=flyState();
+    try{drawArc(s.p,g.dest);}catch(e){}
+    setHud('✈ '+g.dest,s.pct+'% — 残り約'+comma(s.restKm)+'km'+(s.src==='gps'?'':' / 推定'));
+    // 到着の判定: GPSが使えるなら50km以内、使えないなら推定100%
+    if(s.src==='gps'){
+      if(hav({la:GD.lat,ln:GD.lng},{la:g.destGeo.lat,ln:g.destGeo.lng})/1000<=ARRIVE_KM)enterArr();
+    }else{
+      if(s.p>=1)enterArr();
+    }
+  }
+
+  // ---- 到着 → 到着手続きのガイドへ ----
+  function enterArr(){
+    var g=M.guide;if(!g||g.stage!=='fly')return;
+    g.stage='arr';g.idx=0;g.t=Date.now();saveGuide();
+    log('gd-arr',{d:String(g.dest).slice(0,16)});
+    if(GD.tick){clearInterval(GD.tick);GD.tick=null;}
+    stopGWatch();
+    closeFly();
+    openStep();
+    var st=stepsOf('arr',g.dom)[0];
+    say('到着しました。ここからは到着の手続きをご案内します。'+st.s);
+  }
+  function finishGuide(){
+    log('gd-done',{});
+    stopGWatch();clearGuide();
+    closeStep();closeFly();
+    M._busy=false;
+    try{if(typeof WALK!=='undefined'&&WALK.setEnabled)WALK.setEnabled(false);}catch(e){}
+    try{setStatus('GUIDE: 到着手続きが完了しました');}catch(e){}
+    say('お疲れ様でした。到着の手続きは以上です。案内を終了します。');
+  }
+
+  // ---- 旅程の開始（M.startOverseas を包む。中身は触らない）----
+  function armGuide(trip,dom){
+    if(!trip||!trip.ap||!trip.target||!trip.destGeo)return;
+    M.guide={stage:'drive',dest:trip.dest,destGeo:trip.destGeo,
+      ap:{n:trip.ap.n,la:trip.ap.la,ln:trip.ap.ln},
+      target:{lat:trip.target.lat,lng:trip.target.lng},
+      dom:!!dom,idx:0,boardAt:0,flyMin:0,gcKm:0,t:Date.now()};
+    saveGuide();startGWatch();
+    log('gd-arm',{ap:trip.ap.n,dom:!!dom});
+  }
+  (function(){
+    var _so=M.startOverseas;
+    M.startOverseas=function(destName,destGeo,isDomestic){
+      if(!M.GUIDE_ENABLE)return _so.apply(M,arguments);
+      var dom=!!isDomestic,prev=M.trip;
+      if(M.guide){try{quitGuide('');}catch(e){}}
+      var r=_so.apply(M,arguments);
+      var n=0,iv=setInterval(function(){
+        n++;
+        if(n>240){clearInterval(iv);return;}            // 2分で諦める
+        if(!M.trip||M.trip===prev||M.trip.mode!=='air')return;
+        clearInterval(iv);
+        armGuide(M.trip,dom);
+      },500);
+      return r;
+    };
+  })();
+
+  // ---- 本体の到着発話を、この旅程の間だけ差し替える ----
+  //   speakTTS の中身は触らず、外側で包む。GUIDE_ENABLE=false なら包まない。
+  var ARRIVE_TXT=[
+    '目的地に到着しました。ルートガイドを終了します。お疲れ様でした。',
+    '施設内に到着しました。ルートガイドを終了します。お疲れ様でした。'
+  ];
+  (function(){
+    if(!M.GUIDE_ENABLE)return;
+    if(typeof window.speakTTS!=='function')return;
+    var _orig=window.speakTTS;
+    window.speakTTS=function(text,onDone){
+      try{
+        if(ARRIVE_TXT.indexOf(text)>=0){
+          // 空港へ向かっている途中なら、本体の到着発話は飲み込んで手続きガイドへ
+          if(M.GUIDE_ENABLE&&M.guide&&M.guide.stage==='drive'){
+            log('gd-swallow',{k:'air'});
+            _arrSayDelay=ARR_SAY_WAIT;
+            setTimeout(function(){try{enterDep();}catch(e){}},0);
+            if(typeof onDone==='function')onDone();
+            return;
+          }
+          // 乗り場へ向かっている途中なら、フェリー側の発話に差し替える
+          if(M.FERRY_ENABLE&&M.ferry&&M.ferry.stage==='drive'){
+            log('gd-swallow',{k:'ferry'});
+            _arrSayDelay=ARR_SAY_WAIT;
+            setTimeout(function(){try{enterBoard();}catch(e){}},0);
+            if(typeof onDone==='function')onDone();
+            return;
+          }
+          // すでにガイド中・乗船中なら、遅れて届いた本体の到着発話は鳴らさない
+          if((M.GUIDE_ENABLE&&M.guide&&M.guide.stage==='dep')||
+             (M.FERRY_ENABLE&&M.ferry&&M.ferry.stage==='sail')){
+            log('gd-swallow',{k:'late'});
+            if(typeof onDone==='function')onDone();
+            return;
+          }
+        }
+      }catch(e){}
+      return _orig.apply(window,arguments);
+    };
+  })();
+
+  // ---- 起動時: 中断していた手続きガイドを拾う（再開の確認は出さない）----
+  function resumeGuide(){
+    if(!M.GUIDE_ENABLE)return;
+    var o=loadGuide();if(!o)return;
+    M.guide=o;
+    if(o.stage==='drive'){
+      // 空港までの車案内は本体側の復帰にまかせ、こちらは見張りだけ戻す
+      startGWatch();log('gd-resume',{s:'drive'});return;
+    }
+    if(o.stage==='fly'){
+      log('gd-resume',{s:'fly'});
+      GD.lat=null;GD.lng=null;GD.posAt=0;
+      setTimeout(function(){openFly();},600);
+      return;
+    }
+    log('gd-resume',{s:o.stage,i:o.idx});
+    setTimeout(function(){
+      openStep();
+      try{say(stepsOf(o.stage,o.dom)[o.idx].s);}catch(e){}
+    },600);
+  }
+  try{
+    if(document.readyState==='complete')resumeGuide();
+    else window.addEventListener('load',resumeGuide);
+  }catch(e){}
+
 
   return M;
 })();
