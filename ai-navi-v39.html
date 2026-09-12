@@ -11179,15 +11179,15 @@ var INTL=(function(){
   };
 
   // ============================ 画面（予告編） ============================
-  var built=false,GLOBE=null,arcCv=null,arcCtx=null,G={box:0,dpr:1};
+  var built=false,GLOBE=null,arcCv=null,arcCtx=null,G={w:0,h:0,cx:0,cy:0,R:0,dpr:1};
   var PTS=null,ROT=null,timers=[],raf=0,lastP=0,lastName='';
 
   var CSS=''+
   '#intl-prev{position:fixed;inset:0;z-index:9000;background:#000;display:none;overflow:hidden;}'+
   '#intl-prev.on{display:block;}'+
   '#intl-map{position:absolute;inset:0;opacity:0;transition:opacity .8s ease;background:#04101e;}'+
-  '#intl-globe-box{position:absolute;opacity:0;transition:opacity .9s ease;will-change:transform;}'+
-  '#intl-globe-cv{position:absolute;inset:0;width:100%;height:100%;display:block;border-radius:50%;filter:drop-shadow(0 0 26px rgba(0,150,255,0.5)) drop-shadow(0 0 60px rgba(0,80,200,0.28));}'+
+  '#intl-globe-box{position:absolute;inset:0;opacity:0;transition:opacity .9s ease;will-change:transform;pointer-events:none;}'+
+  '#intl-globe-cv{position:absolute;display:block;border-radius:50%;filter:drop-shadow(0 0 26px rgba(0,150,255,0.5)) drop-shadow(0 0 60px rgba(0,80,200,0.28));}'+
   '#intl-arc-cv{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none;}'+
   '#intl-hud{position:absolute;left:14px;right:14px;top:calc(env(safe-area-inset-top,0px) + 18px);text-align:center;pointer-events:none;}'+
   '#intl-hud-t{font-family:"Orbitron",sans-serif;font-size:clamp(11px,3.2vw,16px);letter-spacing:0.18em;color:#fff;text-shadow:0 0 10px rgba(0,200,255,0.9);}'+
@@ -11232,15 +11232,19 @@ var INTL=(function(){
   }
 
   function sizeBox(){
-    var box=Math.round(Math.min(window.innerWidth*0.86,window.innerHeight*0.62));
-    if(box<160)box=160;
-    G.box=box;
+    // 放物線は地球の半径の ARC_ALT 倍まで持ち上がるので、描画キャンバスは画面全体にする。
+    // 地球儀そのものは、持ち上がった分が画面からはみ出さない大きさに収める。
+    G.w=window.innerWidth;G.h=window.innerHeight;
+    G.cx=Math.round(G.w/2);G.cy=Math.round(G.h/2);
     G.dpr=Math.min(2,window.devicePixelRatio||1);
-    var el=$('intl-globe-box');
-    el.style.width=box+'px';el.style.height=box+'px';
-    el.style.left=Math.round((window.innerWidth-box)/2)+'px';
-    el.style.top=Math.round((window.innerHeight-box)/2)+'px';
-    if(arcCv){arcCv.width=Math.round(box*G.dpr);arcCv.height=Math.round(box*G.dpr);}
+    var gd=Math.round(Math.min(G.w*0.74,G.h*0.56));   // 地球儀の直径
+    if(gd<150)gd=150;
+    G.R=gd/2;
+    var gc=$('intl-globe-cv');
+    gc.style.width=gd+'px';gc.style.height=gd+'px';
+    gc.style.left=Math.round(G.cx-gd/2)+'px';
+    gc.style.top=Math.round(G.cy-gd/2)+'px';
+    if(arcCv){arcCv.width=Math.round(G.w*G.dpr);arcCv.height=Math.round(G.h*G.dpr);}
   }
 
   function setHud(t,s){var a=$('intl-hud-t'),b=$('intl-hud-s');if(a)a.textContent=t||'';if(b)b.textContent=s||'';}
@@ -11376,9 +11380,9 @@ var INTL=(function(){
   function drawArc(p,destName){
     if(!arcCtx)return;
     lastP=p;lastName=destName||'';
-    var box=G.box,R=box/2*0.995,cx=box/2,cy=box/2,i;
+    var R=G.R,cx=G.cx,cy=G.cy,i;
     arcCtx.setTransform(G.dpr,0,0,G.dpr,0,0);
-    arcCtx.clearRect(0,0,box,box);
+    arcCtx.clearRect(0,0,G.w,G.h);
     var last=PTS.length-1;
     var idx=Math.max(1,Math.min(last,Math.round(p*last)));
     var rot=ROT[idx];
@@ -11433,7 +11437,7 @@ var INTL=(function(){
       var h2=proj(PTS[j].la,PTS[j].ln,PTS[j].alt,rot,cx,cy,R);
       if(h.vis){
         var ang=Math.atan2(h.y-h2.y,h.x-h2.x);
-        drawPlane(arcCtx,h.x,h.y,ang,Math.max(9,box*0.032));
+        drawPlane(arcCtx,h.x,h.y,ang,Math.max(9,R*0.075));
       }
     }
   }
@@ -11488,8 +11492,7 @@ var INTL=(function(){
   }
 
   function zoomIn(destGeo,cb){
-    var box=G.box,R=box/2*0.995,cx=box/2,cy=box/2;
-    var q=proj(destGeo.lat,destGeo.lng,0,GLOBE?GLOBE.getRot():destGeo.lng,cx,cy,R);
+    var q=proj(destGeo.lat,destGeo.lng,0,GLOBE?GLOBE.getRot():destGeo.lng,G.cx,G.cy,G.R);
     var el=$('intl-globe-box');
     el.style.transformOrigin=q.x.toFixed(1)+'px '+q.y.toFixed(1)+'px';
     el.style.transition='transform '+(T_ZOOM/1000).toFixed(2)+'s cubic-bezier(0.4,0,0.2,1)';
@@ -11513,7 +11516,7 @@ var INTL=(function(){
     if(!GLOBE){
       GLOBE=makeGlobe($('intl-globe-cv'));
       arcCv=$('intl-arc-cv');
-      arcCv.width=Math.round(G.box*G.dpr);arcCv.height=Math.round(G.box*G.dpr);
+      arcCv.width=Math.round(G.w*G.dpr);arcCv.height=Math.round(G.h*G.dpr);
       arcCtx=arcCv.getContext('2d');
     }
     if(GLOBE)GLOBE.start();
@@ -11595,7 +11598,9 @@ var INTL=(function(){
 
     var durTxt=best.durText||'';
     setHud('最寄りの国際空港','✈ '+ap.n+(durTxt?' / 車で約'+durTxt:'')+(best.distText?'（'+best.distText+'）':''));
-    say('目的地は海外です。まず、'+(durTxt?'車でおよそ'+durTxt+'の':'')+ap.n+'へご案内します。');
+    // ★「目的地は海外です」は検索開始時に言っているので、ここでは繰り返さない
+    //   （繰り返すと前の発話を途中で切ってしまい「目的、目的地は…」と聞こえる）
+    say('まず、'+(durTxt?'車でおよそ'+durTxt+'の':'')+ap.n+'へご案内します。');
 
     drawRouteMap(o,target,best,function(){
       after(T_MAP_HOLD,function(){
