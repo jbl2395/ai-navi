@@ -6499,13 +6499,19 @@ function geocodeAndNavigate(dest){
       setStatus('FOUND: '+addr.substring(0,26).toUpperCase());
       // ★v01 海外対応: 国外の目的地は最寄りの国際空港へ切り替える（予告編演出つき）
       //   INTL.ENABLE=false、または country が JP / 判定不能 のときは下の従来処理にそのまま流れる。
+      //   v04: 国内も一度だけ経路を先読みし、船が要るとき（離島）は選択画面を出す。
+      //   普通に車で行ける国内の目的地なら、INTL.route が下とまったく同じ3行を実行する。
       //   万一 INTL 側で例外が出ても、その場合は下の従来処理に落ちるだけで、前版より悪くならない。
       try{
-        if(typeof INTL!=='undefined'&&INTL.ENABLE&&INTL.isOverseas(data.results[0])){
-          INTL.startOverseas(dest,{lat:loc.lat,lng:loc.lng,addr:addr});
+        if(typeof INTL!=='undefined'&&INTL.ENABLE){
+          INTL.route(dest,{lat:loc.lat,lng:loc.lng,addr:addr},data.results[0],function(){
+            speakTTS('目的地を'+dest+'に設定しました。'); // ★従来どおりの確定発話
+            globe.rotateToTarget(-loc.lng);
+            setTimeout(function(){startZoomFlow(dest,'live',{lat:loc.lat,lng:loc.lng,addr:addr});},2200);
+          });
           return;
         }
-      }catch(_intlE){try{INTL._abort('海外の案内を開始できませんでした。');}catch(_e2){}}
+      }catch(_intlE){try{INTL._abort('海外・離島の判定に失敗しました。');}catch(_e2){}}
       speakTTS('目的地を'+dest+'に設定しました。'); // ★メインホーム入力時の確定発話
       globe.rotateToTarget(-loc.lng);
       setTimeout(function(){startZoomFlow(dest,'live',{lat:loc.lat,lng:loc.lng,addr:addr});},2200);
@@ -11001,6 +11007,7 @@ var INTL=(function(){
   var ARC_ALT=0.30;       // 放物線の最大の高さ（地球の半径に対する比）
   var ARC_N=200;          // 放物線のサンプル数
   var DEST_ZOOM=17;       // 目的地上空で止まるときのズーム（zoomToScaleText で「50m」）
+  var DOMESTIC=false;     // 国内の離島に空路を使う場合 true（演出は同じ・言い回しだけ変える）
 
   // ---- 国内の国際線空港。直線距離で3つに絞ってから車の所要時間を比べる ----
   M.AIRPORTS=[
@@ -11529,6 +11536,26 @@ var INTL=(function(){
     after(2400,cb);                                                          // ここで一旦停止してから通常画面へ
   }
 
+  // ---- 本体の案内が「青線が地図に載った」状態になるまで待つ ----
+  //   startZoomFlow のあと、ルート計算中は目的地だけを拡大した素の地図が数秒見える。
+  //   その間は演出の画面を出したままにして、出来上がってから切り替える。
+  function waitNavReady(cb){
+    var t0=Date.now(),fired=false;
+    function fin(){if(fired)return;fired=true;cb();}
+    (function loop(){
+      if(fired)return;
+      var ready=false;
+      try{
+        ready=!!(STATE.routeSteps&&STATE.routeSteps.length>0&&
+                 STATE.directionsRenderer&&STATE.directionsRenderer.getMap());
+      }catch(e){}
+      if(ready){setTimeout(fin,600);return;}      // 全体表示が落ち着くのを少し待つ
+      if(Date.now()-t0>12000){fin();return;}      // ルートが取れない時も必ず戻す
+      setTimeout(loop,200);
+    })();
+  }
+  M._waitNavReady=waitNavReady;
+
   function show(){
     build();
     sizeBox();
@@ -11574,23 +11601,24 @@ var INTL=(function(){
   };
 
   // ============================ 入口 ============================
-  M.startOverseas=function(destName,destGeo){
+  //   isDomestic=true のときは国内の離島。演出は同じで、言い回しだけ変える。
+  M.startOverseas=function(destName,destGeo,isDomestic){
     if(M._busy)return;
-    M._busy=true;M._handed=false;
+    M._busy=true;M._handed=false;DOMESTIC=!!isDomestic;
     log('intl-start',{d:String(destName).slice(0,20)});
-    try{setStatus('OVERSEAS: 空路が必要です');}catch(e){}
+    try{setStatus(DOMESTIC?'AIR ROUTE: 空路で向かいます':'OVERSEAS: 空路が必要です');}catch(e){}
     show();
-    setHud('OVERSEAS ROUTE','最寄りの国際空港を検索しています...');
+    setHud(DOMESTIC?'AIR ROUTE':'OVERSEAS ROUTE','最寄りの空港を検索しています...');
     // ★発話はここでは行わない。空港が決まった時に1回だけまとめて言う。
     //   検索が早く終わると前の発話を途中で切ってしまい「目的、目的地は…」と重なるため。
     // 検索中に SKIP を押したら、演出ごと中止して入力画面に戻す
     M._skip=function(){M._abort('海外の案内を中止しました。');};
     loadMapsApi(function(ok){
       if(!ok){M._abort('地図APIを読み込めませんでした。APIキーを確認してください。');return;}
-      setHud('OVERSEAS ROUTE','現在地を取得しています...');
+      setHud(DOMESTIC?'AIR ROUTE':'OVERSEAS ROUTE','現在地を取得しています...');
       M._fix(function(o){
         if(!o){M._abort('現在地が取得できないため、最寄りの空港を選べません。位置情報を許可してください。');return;}
-        setHud('OVERSEAS ROUTE','空港までの所要時間を比べています...');
+        setHud(DOMESTIC?'AIR ROUTE':'OVERSEAS ROUTE','空港までの所要時間を比べています...');
         M.pickAirport(o,function(best){
           if(!best){M._abort('近くの国際空港が見つかりませんでした。');return;}
           M.findParking(best.ap,function(pk){
@@ -11622,15 +11650,15 @@ var INTL=(function(){
       }catch(e){
         M._abort('案内を開始できませんでした。');return;
       }
-      setTimeout(function(){hide();},3000);   // 地図が出てから予告編を消す
+      waitNavReady(function(){hide();});      // 青線が出てから予告編を消す
     }
     M._skip=function(){clearAll();handoff();};
 
     var durTxt=best.durText||'';
-    setHud('最寄りの国際空港','✈ '+ap.n+(durTxt?' / 車で約'+durTxt:'')+(best.distText?'（'+best.distText+'）':''));
+    setHud('最寄りの空港','✈ '+ap.n+(durTxt?' / 車で約'+durTxt:'')+(best.distText?'（'+best.distText+'）':''));
     // ★「目的地は海外です」は検索開始時に言っているので、ここでは繰り返さない
     //   （繰り返すと前の発話を途中で切ってしまい「目的、目的地は…」と聞こえる）
-    say('目的地は海外です。まず、'+(durTxt?'車でおよそ'+durTxt+'の':'')+ap.n+'へご案内します。');
+    say((DOMESTIC?'空路で向かいます。':'目的地は海外です。')+'まず、'+(durTxt?'車でおよそ'+durTxt+'の':'')+ap.n+'へご案内します。');
 
     drawRouteMap(o,target,best,function(){
       after(T_MAP_HOLD,function(){
@@ -11652,6 +11680,452 @@ var INTL=(function(){
       });
     });
   }
+
+
+  // ==========================================================================
+  // ★v04 国内の離島（空路 / フェリー）
+  //   ・車ルートが取れない、または返ってきたルートにフェリー区間が含まれるとき
+  //     だけ「空路 / フェリー」の選択画面を出す。
+  //   ・航路は自前の港リストを使わず、Googleが返したフェリー区間をそのまま使う。
+  //   M.FERRY_ENABLE=false で、この判定ごと止めて前版の動作に戻せる。
+  // ==========================================================================
+  M.FERRY_ENABLE=true;
+  var FERRY_KEY='ainavi_ferry';
+  var PORT_NEAR_M=300;          // 出発港に着いたとみなす距離
+  var PORT_ARR_M=500;           // 到着港が「まもなく」になる距離
+  var FERRY_TTL_DRIVE=24*3600*1000;
+  var FERRY_TTL_SAIL=72*3600*1000;
+  var LOST_MS=60000;            // これだけ位置が来なければ「取れません」表示
+
+  var F={lat:null,lng:null,posAt:0,wid:null,map:null,mkShip:null,mkA:null,mkB:null,
+         plBack:null,plAhead:null,lostTimer:null,saveAt:0,built:false};
+
+  function stripTags(h){return String(h||'').replace(/<[^>]*>/g,'');}
+  function llArr(a){
+    var o=[],i;
+    for(i=0;i<(a||[]).length;i++){
+      try{o.push({lat:a[i].lat(),lng:a[i].lng()});}catch(e){}
+    }
+    return o;
+  }
+
+  // ---- 経路の中からフェリー区間を1つ取り出す ----
+  function findFerry(route){
+    var legs=route.legs||[],i,j,cnt=0,first=null;
+    for(i=0;i<legs.length;i++){
+      var steps=legs[i].steps||[];
+      for(j=0;j<steps.length;j++){
+        var st=steps[j];
+        if(!/フェリー|ferry/i.test(stripTags(st.instructions||'')))continue;
+        cnt++;
+        if(first)continue;
+        var pth=llArr(st.lat_lngs||st.path||[]);
+        try{
+          first={
+            a:{lat:st.start_location.lat(),lng:st.start_location.lng()},
+            b:{lat:st.end_location.lat(),lng:st.end_location.lng()},
+            path:pth,
+            durText:(st.duration&&st.duration.text)||'',
+            distText:(st.distance&&st.distance.text)||''
+          };
+        }catch(e){first=null;}
+      }
+    }
+    if(first){
+      if(!first.path.length)first.path=[first.a,first.b];
+      first.count=cnt;
+      if(cnt>1)log('fry-multi',{n:cnt});   // 航路が2本以上のときは最初の1本だけ扱う
+    }
+    return first;
+  }
+
+  // ---- 港の名前（取れなければ既定の呼び名）----
+  function portName(pt,def,cb){
+    var fin=false;
+    function done(n){if(fin)return;fin=true;cb(n||def);}
+    var tm=setTimeout(function(){done(def);},7000);
+    try{
+      var svc=new google.maps.places.PlacesService(document.createElement('div'));
+      svc.nearbySearch({location:new google.maps.LatLng(pt.lat,pt.lng),radius:2500,keyword:'フェリーターミナル'},
+      function(res,status){
+        clearTimeout(tm);
+        if(status!==google.maps.places.PlacesServiceStatus.OK||!res||!res.length){done(def);return;}
+        done(res[0].name||def);
+      });
+    }catch(e){clearTimeout(tm);done(def);}
+  }
+
+  // ==================== 入口: 目的地が決まった直後に1回だけ ====================
+  //   海外 → 空港へ。国内 → 経路を先読みして、船が要るときだけ選択画面。
+  //   それ以外は proceed() を呼んで前版とまったく同じ流れに戻す。
+  M.route=function(dest,geo,geoRes,proceed){
+    var done=false;
+    function go(){if(done)return;done=true;try{proceed();}catch(e){}}
+    try{
+      if(M.isOverseas(geoRes)){done=true;M.startOverseas(dest,geo,false);return;}
+      if(!M.FERRY_ENABLE){go();return;}
+      try{setStatus('CHECKING: ルートを確認しています...');}catch(e){}
+      var tm=setTimeout(function(){log('fry-pre',{r:'timeout'});go();},14000);
+      loadMapsApi(function(ok){
+        if(!ok){clearTimeout(tm);go();return;}
+        M._fix(function(o){
+          if(!o){clearTimeout(tm);log('fry-pre',{r:'nofix'});go();return;}
+          var svc=new google.maps.DirectionsService();
+          svc.route({
+            origin:new google.maps.LatLng(o.la,o.ln),
+            destination:new google.maps.LatLng(geo.lat,geo.lng),
+            travelMode:google.maps.TravelMode.DRIVING,region:'jp',language:'ja'
+          },function(res,status){
+            if(done)return;
+            clearTimeout(tm);
+            if(status!==google.maps.DirectionsStatus.OK||!res||!res.routes||!res.routes[0]){
+              log('fry-pre',{r:'noroute-'+status});
+              done=true;askIsland(dest,geo,null);return;          // 車では行けない＝離島
+            }
+            var fr=findFerry(res.routes[0]);
+            if(fr){
+              log('fry-pre',{r:'ferry',d:fr.distText,t:fr.durText});
+              done=true;askIsland(dest,geo,fr);return;            // フェリー区間あり
+            }
+            log('fry-pre',{r:'normal'});
+            go();                                                  // 普通に車で行ける
+          });
+        });
+      });
+    }catch(e){log('fry-pre',{r:'exception'});go();}
+  };
+
+  // ==================== 選択画面（空路 / フェリー）====================
+  var ASK_CSS=''+
+  '#fry-ask{position:fixed;inset:0;z-index:9000;background:rgba(2,7,16,0.93);display:none;align-items:center;justify-content:center;padding:22px;}'+
+  '#fry-ask.on{display:flex;}'+
+  '#fry-ask-in{width:min(92vw,420px);text-align:center;}'+
+  '#fry-ask-t{font-family:"Orbitron",sans-serif;font-size:clamp(13px,3.6vw,18px);color:#fff;letter-spacing:0.1em;text-shadow:0 0 12px rgba(0,200,255,0.8);}'+
+  '#fry-ask-s{margin-top:12px;font-size:clamp(11px,3vw,13px);color:rgba(255,255,255,0.72);line-height:1.7;}'+
+  '.fry-btn{display:block;width:100%;margin-top:14px;padding:16px 14px;border-radius:16px;border:1px solid rgba(0,200,255,0.45);background:rgba(255,255,255,0.06);color:#fff;font-family:"Share Tech Mono",monospace;font-size:15px;letter-spacing:0.06em;cursor:pointer;text-align:center;}'+
+  '.fry-btn b{display:block;font-size:17px;margin-bottom:5px;letter-spacing:0.1em;}'+
+  '.fry-btn small{display:block;margin-top:5px;font-size:11px;color:rgba(0,220,255,0.85);}'+
+  '.fry-btn:active{transform:scale(0.97);background:rgba(0,180,255,0.16);}'+
+  '.fry-btn.off{opacity:0.4;border-color:rgba(255,255,255,0.2);}'+
+  '#fry-ask-cancel{margin-top:18px;background:none;border:none;color:rgba(255,255,255,0.5);font-size:12px;text-decoration:underline;cursor:pointer;}'+
+  /* 乗船中の画面 */
+  '#fry-sail{position:fixed;inset:0;z-index:9000;background:#04101e;display:none;}'+
+  '#fry-sail.on{display:block;}'+
+  '#fry-map{position:absolute;inset:0;}'+
+  '#fry-top{position:absolute;left:10px;right:10px;top:calc(env(safe-area-inset-top,0px) + 12px);background:rgba(4,10,22,0.88);border:1px solid rgba(0,200,255,0.35);border-radius:14px;padding:11px 13px;backdrop-filter:blur(10px);text-align:center;}'+
+  '#fry-top-t{font-family:"Orbitron",sans-serif;font-size:13px;color:#fff;letter-spacing:0.06em;}'+
+  '#fry-top-s{margin-top:7px;font-size:12px;color:rgba(255,220,120,0.95);letter-spacing:0.04em;}'+
+  '#fry-note{position:absolute;left:10px;right:10px;top:calc(env(safe-area-inset-top,0px) + 92px);text-align:center;font-size:11px;color:rgba(255,190,190,0.95);background:rgba(120,30,30,0.8);border-radius:10px;padding:7px 10px;display:none;}'+
+  '#fry-note.on{display:block;}'+
+  '#fry-go{position:absolute;left:14px;right:14px;bottom:calc(env(safe-area-inset-bottom,0px) + 74px);padding:18px;border-radius:18px;border:1px solid rgba(120,255,170,0.6);background:rgba(40,160,90,0.92);color:#fff;font-family:"Orbitron",sans-serif;font-size:16px;letter-spacing:0.12em;display:none;cursor:pointer;}'+
+  '#fry-go.on{display:block;}'+
+  '#fry-go:active{transform:scale(0.97);}'+
+  '#fry-quit{position:absolute;right:14px;bottom:calc(env(safe-area-inset-bottom,0px) + 16px);background:rgba(4,10,22,0.85);border:1px solid rgba(255,120,120,0.45);color:rgba(255,150,150,0.95);border-radius:12px;padding:9px 15px;font-size:12px;cursor:pointer;}';
+
+  function buildFerryDom(){
+    if(F.built)return;
+    F.built=true;
+    var st=document.createElement('style');st.type='text/css';
+    st.appendChild(document.createTextNode(ASK_CSS));document.head.appendChild(st);
+
+    var a=document.createElement('div');a.id='fry-ask';
+    a.innerHTML='<div id="fry-ask-in">'+
+      '<div id="fry-ask-t"></div><div id="fry-ask-s"></div>'+
+      '<button class="fry-btn" id="fry-air" type="button"></button>'+
+      '<button class="fry-btn" id="fry-sea" type="button"></button>'+
+      '<button id="fry-ask-cancel" type="button">やめる</button></div>';
+    document.body.appendChild(a);
+
+    var s=document.createElement('div');s.id='fry-sail';
+    s.innerHTML='<div id="fry-map"></div>'+
+      '<div id="fry-top"><div id="fry-top-t"></div><div id="fry-top-s"></div></div>'+
+      '<div id="fry-note"></div>'+
+      '<button id="fry-go" type="button">▶ 案内開始</button>'+
+      '<button id="fry-quit" type="button">案内をやめる</button>';
+    document.body.appendChild(s);
+
+    $('fry-ask-cancel').addEventListener('click',hideAsk);
+    $('fry-go').addEventListener('click',onGuideStart);
+    $('fry-quit').addEventListener('click',function(){
+      if(!window.confirm('フェリーの案内をやめますか？'))return;
+      quitFerry();
+    });
+  }
+
+  function hideAsk(){if(F.built)$('fry-ask').classList.remove('on');}
+
+  function askIsland(dest,geo,fr){
+    buildFerryDom();
+    $('fry-ask-t').textContent=dest;
+    $('fry-ask-s').textContent=fr
+      ? 'この目的地へは船が必要です。行き方を選んでください。'
+      : 'この目的地へは車だけでは行けません。行き方を選んでください。';
+    var air=$('fry-air'),sea=$('fry-sea');
+    air.innerHTML='<b>✈ 空路</b>最寄りの空港まで車でご案内します<small>空港までのルートと上空からの経路を表示</small>';
+    air.className='fry-btn';
+    air.onclick=function(){hideAsk();M.startOverseas(dest,geo,true);};
+    if(fr){
+      sea.innerHTML='<b>⛴ フェリー</b>乗り場まで車でご案内します'+
+        '<small>航路 '+(fr.distText||'')+(fr.durText?' / 約'+fr.durText:'')+'</small>';
+      sea.className='fry-btn';
+      sea.onclick=function(){hideAsk();startFerry(dest,geo,fr);};
+    }else{
+      sea.innerHTML='<b>⛴ フェリー</b>航路が見つかりませんでした<small>この目的地へのフェリー経路をGoogleが返していません</small>';
+      sea.className='fry-btn off';
+      sea.onclick=null;
+    }
+    $('fry-ask').classList.add('on');
+    say('この目的地へは船か飛行機が必要です。行き方を選んでください。');
+    log('fry-ask',{d:String(dest).slice(0,16),ferry:!!fr});
+  }
+
+  // ==================== フェリーの旅程 ====================
+  function saveFerry(){
+    try{if(M.ferry)localStorage.setItem(FERRY_KEY,JSON.stringify(M.ferry));}catch(e){}
+  }
+  function clearFerry(){M.ferry=null;try{localStorage.removeItem(FERRY_KEY);}catch(e){}}
+  function loadFerry(){
+    try{
+      var r=localStorage.getItem(FERRY_KEY);if(!r)return null;
+      var o=JSON.parse(r);
+      if(!o||!o.a||!o.b||!o.destGeo)return null;
+      var ttl=(o.stage==='sail')?FERRY_TTL_SAIL:FERRY_TTL_DRIVE;
+      if(!o.t||(Date.now()-o.t)>ttl){clearFerry();return null;}
+      return o;
+    }catch(e){return null;}
+  }
+
+  function startFerry(dest,geo,fr){
+    buildFerryDom();
+    try{setStatus('FERRY: 乗り場を調べています...');}catch(e){}
+    portName(fr.a,'出発港',function(na){
+      portName(fr.b,'到着港',function(nb){
+        M.ferry={dest:dest,destGeo:geo,a:fr.a,b:fr.b,na:na,nb:nb,path:fr.path,
+                 stage:'drive',arrSpoken:false,t:Date.now()};
+        saveFerry();
+        startWatch();
+        log('fry-start',{a:na,b:nb,n:fr.path.length});
+        say('フェリーで向かいます。まず、'+na+'へご案内します。');
+        try{
+          startZoomFlow(na+'（フェリー乗り場）','live',{lat:fr.a.lat,lng:fr.a.lng,addr:na});
+        }catch(e){log('fry-start',{r:'zoomflow-ng'});}
+      });
+    });
+  }
+
+  // ---- 位置の見張り（車の案内とは別に、この旅程の間だけ動かす）----
+  function startWatch(){
+    stopWatch();
+    if(!navigator.geolocation)return;
+    try{
+      F.wid=navigator.geolocation.watchPosition(onPos,function(){},
+        {enableHighAccuracy:true,maximumAge:5000,timeout:20000});
+    }catch(e){}
+    if(F.lostTimer)clearInterval(F.lostTimer);
+    F.lostTimer=setInterval(tickLost,10000);
+  }
+  function stopWatch(){
+    if(F.wid!==null&&navigator.geolocation){try{navigator.geolocation.clearWatch(F.wid);}catch(e){}}
+    F.wid=null;
+    if(F.lostTimer){clearInterval(F.lostTimer);F.lostTimer=null;}
+  }
+  function tickLost(){
+    if(!M.ferry||M.ferry.stage!=='sail')return;
+    var el=$('fry-note');if(!el)return;
+    if(F.posAt&&(Date.now()-F.posAt)>LOST_MS){
+      el.textContent='⚠ 位置情報が取れません（最後に分かった位置で止めています）';
+      el.classList.add('on');
+    }else{
+      el.classList.remove('on');
+    }
+  }
+
+  function onPos(p){
+    F.lat=p.coords.latitude;F.lng=p.coords.longitude;F.posAt=Date.now();
+    if(!M.ferry)return;
+    var here={la:F.lat,ln:F.lng};
+    if(M.ferry.stage==='drive'){
+      if(hav(here,{la:M.ferry.a.lat,ln:M.ferry.a.lng})<=PORT_NEAR_M)enterBoard();
+      return;
+    }
+    if(M.ferry.stage==='sail'){
+      if(M.ferry._rchk){
+        // 開き直した直後の1回だけ: すでに着いていれば「まもなく」ではなく「到着しました」
+        M.ferry._rchk=false;
+        drawSail();
+        if(hav(here,{la:M.ferry.b.lat,ln:M.ferry.b.lng})<=PORT_ARR_M){showGo('arrived');return;}
+      }
+      drawSail();
+      checkArrive();
+      if(Date.now()-F.saveAt>30000){F.saveAt=Date.now();M.ferry.t=Date.now();saveFerry();}
+    }
+  }
+
+  // ---- 出発港に到着 → 乗船モードへ ----
+  function enterBoard(){
+    if(!M.ferry||M.ferry.stage!=='drive')return;
+    M.ferry.stage='sail';M.ferry.t=Date.now();saveFerry();
+    log('fry-board',{a:M.ferry.na});
+    try{exitNav();}catch(e){}
+    openSail();
+    say(M.ferry.na+'に到着しました。乗船してください。乗船中もこのまま現在地を表示します。');
+  }
+
+  // ---- 乗船中の画面 ----
+  function openSail(){
+    buildFerryDom();
+    var f=M.ferry;if(!f)return;
+    $('fry-sail').classList.add('on');
+    if(!F.posAt)F.posAt=Date.now();   // ここから60秒来なければ「取れません」を出す
+    $('fry-go').classList.remove('on');
+    $('fry-note').classList.remove('on');
+    $('fry-top-t').textContent='⛴ '+f.na+' → '+f.nb;
+    $('fry-top-s').textContent='航路を表示しています...';
+    var el=$('fry-map');el.innerHTML='';
+    try{
+      F.map=new google.maps.Map(el,{
+        center:{lat:(f.a.lat+f.b.lat)/2,lng:(f.a.lng+f.b.lng)/2},
+        zoom:8,mapTypeId:'roadmap',tilt:0,heading:0,disableDefaultUI:true,
+        gestureHandling:'greedy',keyboardShortcuts:false,clickableIcons:false,
+        styles:MAPSTYLE,backgroundColor:'#04101e'
+      });
+      var bd=new google.maps.LatLngBounds();
+      for(var i=0;i<f.path.length;i++)bd.extend(new google.maps.LatLng(f.path[i].lat,f.path[i].lng));
+      bd.extend(new google.maps.LatLng(f.a.lat,f.a.lng));
+      bd.extend(new google.maps.LatLng(f.b.lat,f.b.lng));
+      try{F.map.fitBounds(bd,{top:130,bottom:130,left:40,right:40});}catch(e2){F.map.fitBounds(bd);}
+      // 通ってきた側＝薄い実線 / これから＝点線
+      F.plBack=new google.maps.Polyline({map:F.map,path:[],zIndex:2,
+        strokeColor:'#ffffff',strokeOpacity:0.38,strokeWeight:3});
+      F.plAhead=new google.maps.Polyline({map:F.map,path:[],zIndex:3,strokeOpacity:0,
+        icons:[{icon:{path:google.maps.SymbolPath.CIRCLE,scale:2.6,fillColor:'#ffe45c',
+                fillOpacity:1,strokeOpacity:0},offset:'0',repeat:'14px'}]});
+      F.mkA=new google.maps.Marker({position:{lat:f.a.lat,lng:f.a.lng},map:F.map,zIndex:4,
+        icon:{path:google.maps.SymbolPath.CIRCLE,scale:6,fillColor:'#00e0ff',fillOpacity:1,
+              strokeColor:'#ffffff',strokeWeight:2}});
+      F.mkB=new google.maps.Marker({position:{lat:f.b.lat,lng:f.b.lng},map:F.map,zIndex:4,
+        icon:{path:google.maps.SymbolPath.CIRCLE,scale:7,fillColor:'#ffe45c',fillOpacity:1,
+              strokeColor:'#ffffff',strokeWeight:2}});
+      F.mkShip=new google.maps.Marker({position:{lat:f.a.lat,lng:f.a.lng},map:F.map,zIndex:6,
+        label:{text:'⛴',fontSize:'18px'},
+        icon:{path:google.maps.SymbolPath.CIRCLE,scale:15,fillColor:'#0b2440',fillOpacity:0.92,
+              strokeColor:'#ffe45c',strokeWeight:2}});
+    }catch(e){log('fry-sail',{r:'map-exception'});}
+    drawSail();
+  }
+
+  // ---- 航路の描き分け（曲線は必ず船の位置を通す）----
+  function drawSail(){
+    var f=M.ferry;if(!f||!F.map||!F.plBack)return;
+    var pth=f.path,n=pth.length,i;
+    var sh=(F.lat!==null)?{lat:F.lat,lng:F.lng}:{lat:f.a.lat,lng:f.a.lng};
+    // 航路上でいちばん近い点を探し、そこで前後に切り分ける
+    var best=0,bestD=Infinity;
+    for(i=0;i<n;i++){
+      var d=hav({la:sh.lat,ln:sh.lng},{la:pth[i].lat,ln:pth[i].lng});
+      if(d<bestD){bestD=d;best=i;}
+    }
+    var back=[],ahead=[];
+    for(i=0;i<=best;i++)back.push(pth[i]);
+    back.push(sh);
+    ahead.push(sh);
+    for(i=best;i<n;i++)ahead.push(pth[i]);
+    try{
+      F.plBack.setPath(back);
+      F.plAhead.setPath(ahead);
+      if(F.mkShip)F.mkShip.setPosition(sh);
+    }catch(e){}
+    // 進み具合
+    var total=0,doneM=0;
+    for(i=1;i<n;i++){
+      var seg=hav({la:pth[i-1].lat,ln:pth[i-1].lng},{la:pth[i].lat,ln:pth[i].lng});
+      total+=seg;if(i<=best)doneM+=seg;
+    }
+    var restKm=Math.max(0,(total-doneM))/1000;
+    var pct=total>0?Math.min(100,Math.max(0,Math.round(doneM/total*100))):0;
+    var s=$('fry-top-s');
+    if(s){
+      s.textContent=(F.lat===null)
+        ? '位置情報の取得を待っています...'
+        : pct+'% 進行 — '+f.nb+'まで約'+comma(restKm)+'km';
+    }
+  }
+
+  // ---- 到着の判定 ----
+  function checkArrive(){
+    var f=M.ferry;if(!f||F.lat===null)return;
+    var d=hav({la:F.lat,ln:F.lng},{la:f.b.lat,ln:f.b.lng});
+    if(d>PORT_ARR_M)return;
+    showGo('soon');
+  }
+  function showGo(kind){
+    var f=M.ferry;if(!f||f.arrSpoken)return;
+    f.arrSpoken=true;saveFerry();
+    $('fry-go').classList.add('on');
+    if(kind==='soon'){
+      $('fry-top-s').textContent='まもなく '+f.nb+' に到着します';
+      say('まもなく'+f.nb+'に到着します。');
+    }else{
+      $('fry-top-s').textContent=f.nb+' に到着しました';
+      say(f.nb+'に到着しました。');
+    }
+    log('fry-arrive',{k:kind,b:f.nb});
+  }
+
+  // ---- 「案内開始」で港から目的地への車案内を再開 ----
+  function onGuideStart(){
+    var f=M.ferry;if(!f)return;
+    var dest=f.dest,g=f.destGeo,nb=f.nb;
+    stopWatch();clearFerry();
+    log('fry-resume-drive',{d:String(dest).slice(0,16)});
+    say(nb+'から'+dest+'へご案内します。');
+    try{
+      startZoomFlow(dest,'live',{lat:g.lat,lng:g.lng,addr:g.addr||dest});
+    }catch(e){log('fry-resume-drive',{r:'zoomflow-ng'});}
+    M._waitNavReady(function(){closeSail();});   // 青線が出てから乗船画面を閉じる
+  }
+  function closeSail(){
+    if(!F.built)return;
+    $('fry-sail').classList.remove('on');
+    $('fry-map').innerHTML='';
+    F.map=null;F.plBack=null;F.plAhead=null;F.mkShip=null;F.mkA=null;F.mkB=null;
+  }
+  function quitFerry(){
+    stopWatch();clearFerry();closeSail();
+    try{setStatus('FERRY: 案内をやめました');}catch(e){}
+    log('fry-quit',{});
+  }
+  M._ferryQuit=quitFerry;
+  M._ferryResume=function(){offerResume();};   // 起動時の復帰（動作確認用にも公開）
+
+  // ---- 起動時: 中断していたフェリーの旅程を拾う ----
+  function offerResume(){
+    var o=loadFerry();if(!o)return;
+    if(o.stage==='drive'){
+      // 乗り場までの車案内は本体側の復帰にまかせ、こちらは見張りだけ戻す
+      M.ferry=o;startWatch();
+      log('fry-resume',{s:'drive'});
+      return;
+    }
+    setTimeout(function(){
+      if(!window.confirm('フェリーの案内が中断されています。\n\n「'+o.na+' → '+o.nb+'」の案内を再開しますか？')){
+        clearFerry();log('fry-resume',{s:'no'});return;
+      }
+      o.arrSpoken=false;   // 開き直した時はもう一度案内できるように戻す
+      o._rchk=true;        // 最初に届いた位置で「まもなく/到着しました」を決める
+      M.ferry=o;saveFerry();
+      log('fry-resume',{s:'sail'});
+      F.lat=null;F.lng=null;F.posAt=0;
+      loadMapsApi(function(ok){
+        if(!ok)return;
+        openSail();startWatch();
+      });
+    },1500);
+  }
+  try{
+    if(document.readyState==='complete')offerResume();
+    else window.addEventListener('load',offerResume);
+  }catch(e){}
 
   return M;
 })();
