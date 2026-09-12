@@ -11000,6 +11000,7 @@ var INTL=(function(){
   var T_ZOOM=1800;        // 目的地上空へのズームイン
   var ARC_ALT=0.30;       // 放物線の最大の高さ（地球の半径に対する比）
   var ARC_N=200;          // 放物線のサンプル数
+  var DEST_ZOOM=17;       // 目的地上空で止まるときのズーム（zoomToScaleText で「50m」）
 
   // ---- 国内の国際線空港。直線距離で3つに絞ってから車の所要時間を比べる ----
   M.AIRPORTS=[
@@ -11192,6 +11193,7 @@ var INTL=(function(){
   '#intl-hud{position:absolute;left:14px;right:14px;top:calc(env(safe-area-inset-top,0px) + 18px);text-align:center;pointer-events:none;}'+
   '#intl-hud-t{font-family:"Orbitron",sans-serif;font-size:clamp(11px,3.2vw,16px);letter-spacing:0.18em;color:#fff;text-shadow:0 0 10px rgba(0,200,255,0.9);}'+
   '#intl-hud-s{margin-top:8px;font-size:clamp(10px,2.8vw,13px);letter-spacing:0.08em;color:rgba(255,220,120,0.95);text-shadow:0 0 10px rgba(255,180,0,0.5);}'+
+  '#intl-destmap{position:absolute;inset:0;opacity:0;transition:opacity .6s ease;background:#000;}'+
   '#intl-flash{position:absolute;inset:0;background:radial-gradient(circle at 50% 50%,rgba(255,255,255,0.95),rgba(255,220,120,0.0) 65%);opacity:0;pointer-events:none;transition:opacity .7s ease;}'+
   '#intl-skip{position:absolute;right:14px;bottom:calc(env(safe-area-inset-bottom,0px) + 18px);z-index:9001;background:rgba(4,10,22,0.85);border:1px solid rgba(0,200,255,0.45);color:rgba(0,220,255,0.95);border-radius:12px;padding:9px 15px;font-family:"Orbitron",sans-serif;font-size:11px;letter-spacing:0.12em;cursor:pointer;}'+
   '#intl-skip:active{transform:scale(0.94);}';
@@ -11217,6 +11219,7 @@ var INTL=(function(){
     d.innerHTML=''+
       '<div id="intl-map"></div>'+
       '<div id="intl-globe-box"><canvas id="intl-globe-cv"></canvas><canvas id="intl-arc-cv"></canvas></div>'+
+      '<div id="intl-destmap"></div>'+
       '<div id="intl-hud"><div id="intl-hud-t"></div><div id="intl-hud-s"></div></div>'+
       '<div id="intl-flash"></div>'+
       '<button id="intl-skip" type="button">SKIP ▶</button>';
@@ -11502,6 +11505,30 @@ var INTL=(function(){
     after(T_ZOOM,cb);
   }
 
+  // ---- 目的地上空でいったん止める（真上から／縮尺50m固定）----
+  //   案内中のズーム（STATE.userZoom / savedZoom）とは無関係の、この演出専用の地図。
+  //   zoomToScaleText で 50m に対応するのはズーム17。
+  function destMapPhase(destGeo,destName,cb){
+    var el=$('intl-destmap');
+    el.innerHTML='';
+    try{
+      var map=new google.maps.Map(el,{
+        center:{lat:destGeo.lat,lng:destGeo.lng},
+        zoom:DEST_ZOOM,mapTypeId:'hybrid',tilt:0,heading:0,
+        disableDefaultUI:true,gestureHandling:'none',keyboardShortcuts:false,
+        clickableIcons:false,backgroundColor:'#04101e'
+      });
+      new google.maps.Marker({position:{lat:destGeo.lat,lng:destGeo.lng},map:map,
+        icon:{path:google.maps.SymbolPath.CIRCLE,scale:10,fillColor:'#ffe45c',fillOpacity:0.85,strokeColor:'#ffffff',strokeWeight:3}});
+    }catch(e){log('intl-destmap',{r:'exception'});}
+    el.style.opacity='1';
+    $('intl-globe-box').style.opacity='0';
+    setHud(destName,'目的地上空 — 縮尺 '+zoomToScaleText(DEST_ZOOM));
+    say(destName+'の上空です。');
+    after(500,function(){var f=$('intl-flash');if(f)f.style.opacity='0';});  // 白を消して地図を出す
+    after(2400,cb);                                                          // ここで一旦停止してから通常画面へ
+  }
+
   function show(){
     build();
     sizeBox();
@@ -11510,6 +11537,7 @@ var INTL=(function(){
     $('intl-map').style.opacity='0';
     $('intl-map').innerHTML='';
     $('intl-flash').style.opacity='0';
+    $('intl-destmap').style.opacity='0';$('intl-destmap').innerHTML='';
     var box=$('intl-globe-box');
     box.style.transition='opacity .9s ease';
     box.style.transform='none';box.style.opacity='0';
@@ -11530,6 +11558,7 @@ var INTL=(function(){
     box.style.transition='none';box.style.transform='none';box.style.opacity='0';
     $('intl-flash').style.opacity='0';
     $('intl-map').innerHTML='';
+    $('intl-destmap').style.opacity='0';$('intl-destmap').innerHTML='';
     if(GLOBE)GLOBE.stop();
     M._busy=false;
   }
@@ -11552,7 +11581,8 @@ var INTL=(function(){
     try{setStatus('OVERSEAS: 空路が必要です');}catch(e){}
     show();
     setHud('OVERSEAS ROUTE','最寄りの国際空港を検索しています...');
-    say('目的地は海外です。最寄りの国際空港を調べます。');
+    // ★発話はここでは行わない。空港が決まった時に1回だけまとめて言う。
+    //   検索が早く終わると前の発話を途中で切ってしまい「目的、目的地は…」と重なるため。
     // 検索中に SKIP を押したら、演出ごと中止して入力画面に戻す
     M._skip=function(){M._abort('海外の案内を中止しました。');};
     loadMapsApi(function(ok){
@@ -11600,7 +11630,7 @@ var INTL=(function(){
     setHud('最寄りの国際空港','✈ '+ap.n+(durTxt?' / 車で約'+durTxt:'')+(best.distText?'（'+best.distText+'）':''));
     // ★「目的地は海外です」は検索開始時に言っているので、ここでは繰り返さない
     //   （繰り返すと前の発話を途中で切ってしまい「目的、目的地は…」と聞こえる）
-    say('まず、'+(durTxt?'車でおよそ'+durTxt+'の':'')+ap.n+'へご案内します。');
+    say('目的地は海外です。まず、'+(durTxt?'車でおよそ'+durTxt+'の':'')+ap.n+'へご案内します。');
 
     drawRouteMap(o,target,best,function(){
       after(T_MAP_HOLD,function(){
@@ -11613,7 +11643,9 @@ var INTL=(function(){
         after(T_FADE,function(){
           runArc(destName,function(){
             after(T_HOLD,function(){
-              zoomIn(destGeo,handoff);
+              zoomIn(destGeo,function(){
+                destMapPhase(destGeo,destName,handoff);
+              });
             });
           });
         });
