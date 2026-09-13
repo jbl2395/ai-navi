@@ -1264,6 +1264,17 @@ var BACKNEAR_DIST_M      = 1200; // 目的地までの直線距離がこの値�
 var BACKNEAR_ANGLE_DEG   = 110;  // 進行方位と「現在地→目的地」方位の差がこの角度以上＝背後
 var BACKNEAR_MAX_RATIO   = 3.0;  // 採用候補のルート総距離の上限（直線距離×この倍率）←遠回り・暴走ルート防止
 var BACKNEAR_MAX_EXTRA_M = 400;  // 同 上限の下駄（直線距離＋この値）←至近で倍率だけだと厳しすぎるため
+// ★v51「近接帯の正気ゲート」: 目的地の目前では、遠回り／Uターンのリルートを採用しない。
+//   9/13実走(イエローハット有田川店)で、目的地まで192m→総距離289m、71m→231m(先頭Uターン)を
+//   連続採用して「明らかに変なコース」になった。近接帯の上限が 直線×3.0 / 直線+400m なので、
+//   71m地点では471mまで通ってしまうのが原因。全面禁止にはせず「短くまともな候補なら通す」。
+//   NEARSANE_ENABLE=false で v50 と同じ動作に戻る（純追加）。
+var NEARSANE_ENABLE    = true;
+var NEARSANE_M         = 200; // 目的地までの直線距離がこの値以下＝近接帯
+var NEARSANE_EXTRA_M   = 150; // 採用できるルート総距離の上限＝直線距離＋この値
+var NEARSANE_UTURN_DEG = 150; // 走行方位に対しルート先頭がこの角度以上反転＝Uターン扱い
+var NEARSANE_HEAD_M    = 40;  // 上の判定に使うルート先頭の長さ
+var NEARSANE_CLEAR_M   = 200; // 近接帯から NEARSANE_M+この値 以上離れたら見送りラッチを解除
 // ★再捕捉モード: リルート後、最初の案内は前方かつ残距離300m以上に限定
 var RECAPTURE_MIN_M  = 300; // （旧・固定距離ゲート用。密度適応化により未使用。残置）
 var RECAPTURE_CLEAR_M = 400; // 400m以上の案内が出たら再捕捉モード解除
@@ -5057,8 +5068,89 @@ function _checkParkingArrival(currentPos,prewarm){
   }catch(e){STATE._parkChkBusy=false;}
 }
 
+// ★v51(近接帯の正気ゲート): 判定ヘルパーと、リルートを見送るときの後始末。純追加。
+function _nsDistToDest(){
+  try{
+    if(!STATE.currentDestGeo||!STATE.lastLat||!STATE.lastLng)return -1;
+    return google.maps.geometry.spherical.computeDistanceBetween(
+      new google.maps.LatLng(STATE.lastLat,STATE.lastLng),
+      new google.maps.LatLng(STATE.currentDestGeo.lat,STATE.currentDestGeo.lng));
+  }catch(e){return -1;}
+}
+function _nsRouteLen(route){
+  try{
+    var lg=(route&&route.legs)?route.legs:[],m=0,i;
+    for(i=0;i<lg.length;i++)m+=(lg[i].distance&&lg[i].distance.value)?lg[i].distance.value:0;
+    return m;
+  }catch(e){return Infinity;}
+}
+function _nsUturnStart(route){   // 先頭がUターンか（maneuver → 本文 → 幾何 の順に見る）
+  try{
+    var st=(route&&route.legs&&route.legs[0])?route.legs[0].steps:null;
+    if(!st||!st.length)return false;
+    var i,lim=Math.min(2,st.length);
+    for(i=0;i<lim;i++){
+      if(/uturn/.test(st[i].maneuver||''))return true;
+      if(/[UＵ]\s*ターン/.test(stripHtml(st[i].instructions||'')))return true;
+    }
+    var hd=getTravelHeading();
+    if(hd===null||hd===undefined)return false;
+    var pa=st[0].path;if(!pa||pa.length<2)return false;
+    var acc=0,j=0,end=pa[1];
+    while(j<pa.length-1){
+      acc+=google.maps.geometry.spherical.computeDistanceBetween(pa[j],pa[j+1]);
+      end=pa[j+1];j++;
+      if(acc>=NEARSANE_HEAD_M)break;
+    }
+    var rh=google.maps.geometry.spherical.computeHeading(pa[0],end);
+    return Math.abs((((rh-hd)%360)+540)%360-180)>=NEARSANE_UTURN_DEG;
+  }catch(e){return false;}
+}
+function _nsDestWord(){          // 目的地が今どちら側にあるか
+  try{
+    var hd=getTravelHeading();
+    if(!STATE.currentDestGeo||!STATE.lastLat||!STATE.lastLng)return '';
+    if(hd===null||hd===undefined)return '';
+    var b=google.maps.geometry.spherical.computeHeading(
+      new google.maps.LatLng(STATE.lastLat,STATE.lastLng),
+      new google.maps.LatLng(STATE.currentDestGeo.lat,STATE.currentDestGeo.lng));
+    var d=(((b-hd)%360)+540)%360-180;   // マイナス＝左 / プラス＝右
+    var a=Math.abs(d);
+    if(a<=25)return '正面';
+    if(a>=155)return '後方';
+    if(a>=110)return (d<0?'左後方':'右後方');
+    if(a>=65)return (d<0?'左手':'右手');
+    return (d<0?'左前方':'右前方');
+  }catch(e){return '';}
+}
+function _nsSayDest(d){
+  try{
+    var w=_nsDestWord(),m=Math.max(10,Math.round(d/10)*10);
+    var t=w?('目的地は'+w+'、およそ'+m+'メートル先です。'):('目的地はおよそ'+m+'メートル先です。');
+    if(typeof speakTTSWithChime==='function')speakTTSWithChime(t,null,true);
+    else speakTTS(t);
+  }catch(e){}
+}
+function _nsGiveUp(d,notice){    // 近接帯: リルートせず方向だけ示して到着判定に任せる
+  try{
+    STATE.rerouteInProgress=false;
+    if(notice)notice.classList.remove('show');
+    STATE._nsLatch=Date.now();
+    try{_navLog('nearsane-hold',{d:Math.round(d)});}catch(_nh){}
+    STATE.navActive=true;
+    if(STATE.currentDestGeo)startGpsTracking(STATE.currentMap,STATE.currentDestGeo,STATE.stepIdx);
+    _nsSayDest(d);
+  }catch(e){}
+}
 function triggerReroute(currentMinDist){
   if(STATE.rerouteInProgress)return;
+  // ★v51(近接帯の正気ゲート): 一度「見送り」を決めたら同じ場所でリルートを繰り返さない。
+  //   目的地から十分離れたら解除して従来どおりに戻る。純追加。
+  if(NEARSANE_ENABLE&&STATE._nsLatch){
+    var _nsD0=_nsDistToDest();
+    if(_nsD0>=0&&_nsD0>NEARSANE_M+NEARSANE_CLEAR_M){STATE._nsLatch=0;}
+    else{STATE.offRouteCount=0;return;}
+  }
   // ★②: クールダウン＆最低移動距離チェック（「ルートを変更しました」の連呼防止）
   // ★300m問題対策: 直前のリルート（案内発話）直後に交差点を無視した場合、従来は12秒の
   //   クールダウンでブロックされ、50km/hなら約165m進んでしまい「次の交差点が300m以内」の
@@ -5214,6 +5306,32 @@ function triggerReroute(currentMinDist){
       // preserveViewport により広域化しないため、ズームは現在値のまま維持される
       STATE.navActive=true;startGpsTracking(STATE.currentMap,STATE.currentDestGeo,0);
     }
+    // ★v51(近接帯の正気ゲート): 採用の入口をここ1か所で絞る。_adoptOK・フェーズ3・背後近距離・
+    //   上限到達フォールバック・経由点要求のどの経路から来ても必ずこの包みを通る。
+    //   目的地まで NEARSANE_M 以内では「先頭がUターン」または「総距離が直線+NEARSANE_EXTRA_M 超」の
+    //   候補を採用せず、リルート自体を見送って方向だけ発話する（到着判定に任せる）。
+    //   既存の採点系・採用判定には一切触らない＝純追加。
+    var _applyRouteRaw=_applyRoute;
+    _applyRoute=function(result,routeIndex){
+      if(NEARSANE_ENABLE){
+        try{
+          var _nsD=_nsDistToDest();
+          if(_nsD>=0&&_nsD<=NEARSANE_M){
+            var _nsI=(typeof routeIndex==='number'&&routeIndex>=0&&result&&result.routes&&result.routes[routeIndex])?routeIndex:0;
+            var _nsR=(result&&result.routes)?result.routes[_nsI]:null;
+            if(_nsR){
+              var _nsLen=_nsRouteLen(_nsR),_nsCap=_nsD+NEARSANE_EXTRA_M,_nsU=_nsUturnStart(_nsR);
+              if(_nsU||_nsLen>_nsCap){
+                try{_navLog('nearsane-reject',{d:Math.round(_nsD),len:(isFinite(_nsLen)?Math.round(_nsLen):-1),cap:Math.round(_nsCap),u:_nsU?1:0,idx:_nsI});}catch(_nr){}
+                _nsGiveUp(_nsD,notice);return;
+              }
+              try{_navLog('nearsane-ok',{d:Math.round(_nsD),len:(isFinite(_nsLen)?Math.round(_nsLen):-1),cap:Math.round(_nsCap),idx:_nsI});}catch(_no){}
+            }
+          }
+        }catch(_nse2){}
+      }
+      return _applyRouteRaw(result,routeIndex);
+    };
     function _allFailed(){
       STATE.rerouteInProgress=false;
       notice.classList.remove('show');
@@ -7948,6 +8066,8 @@ function startGpsTracking(map,destGeo,fromStepIdx){
   STATE._tunLastFix=null;STATE._tunSpd=[];STATE._tunRejFrom=0;STATE._tunRejN=0; // ★トンネル対策(v3): ゴースト判定/速度サンプルもリセット
   STATE._tunCum=null;STATE._tunCumFor=null;
   try{_navLog('nav-start',{dest:(STATE.currentDest||'').slice(0,24),n:(STATE.routeSteps||[]).length,toll:!!STATE._routeHasToll});}catch(_nse){}
+  try{if(typeof INTL!=='undefined'&&INTL.dropStalePlans)INTL.dropStalePlans('navstart');}catch(_dsp){} // ★v50: 目的地と違う海外/離島の旅程が残っていたら破棄
+  try{STATE._nsLatch=0;}catch(_nsl){} // ★v51: 近接帯の「見送り」ラッチは案内開始で解除
   try{_headLogReset();STATE._hlGpsAt=0;STATE._hlInfo=null;}catch(_hlr){} // ★v22(方位診断): 案内開始で記録数と直前方位をリセット
   try{_navSaveTrip();}catch(_nst){} // ★v19(B): 案内が始まった時点で保存 // ★実走ログ(v3): 走行の区切り
   stopCamDriver(); // ★カメラ補間を一旦リセット（最初のGPSで現在地へスナップ）
@@ -12504,6 +12624,52 @@ var INTL=(function(){
     };
   })();
 
+  // ---- v50: 残っていた旅程が、別の目的地の到着を横取りしないようにする ----
+  //   症状: 前に試した海外/離島の旅程が localStorage に stage:'drive' のまま残っていると、
+  //         まったく関係ない目的地（例: イエローハット）に着いた時に
+  //         「〇〇空港に到着しました」と手続きガイドへ入ってしまう。
+  //   対策: 到着・案内開始のたびに「今の目的地＝その旅程の到着点か」を照合し、
+  //         違っていればその旅程を破棄する。
+  //   M.PLANMATCH_ENABLE=false で、この判定ごと止めて前版の動作に戻せる。
+  M.PLANMATCH_ENABLE=true;
+  var PLANMATCH_M=600;                // 旅程の到着点と今の目的地が同じとみなす距離
+  function _planHere(){               // 照合に使う点: 今の案内の目的地 →（無ければ）現在地
+    try{
+      var g=(typeof STATE!=='undefined')?STATE.currentGeoData:null;
+      if(g&&isFinite(g.lat)&&isFinite(g.lng))return {la:g.lat,ln:g.lng};
+    }catch(e){}
+    if(GD.lat!==null&&GD.lng!==null)return {la:GD.lat,ln:GD.lng};
+    try{
+      if(typeof STATE!=='undefined'&&STATE.lastLat)return {la:STATE.lastLat,ln:STATE.lastLng};
+    }catch(e){}
+    return null;
+  }
+  function _planFar(tla,tln){         // 到着点から離れているか（判定材料が無い時は false＝従来どおり）
+    if(!M.PLANMATCH_ENABLE)return false;
+    if(!isFinite(tla)||!isFinite(tln))return false;
+    var p=_planHere();if(!p)return false;
+    return hav(p,{la:tla,ln:tln})>PLANMATCH_M;
+  }
+  function dropStalePlans(where){     // 一致しない旅程は破棄する
+    if(!M.PLANMATCH_ENABLE)return;
+    try{
+      var g=M.guide;
+      if(g&&g.stage==='drive'&&g.target&&_planFar(g.target.lat,g.target.lng)){
+        log('gd-stale',{k:'air',w:where||'',ap:(g.ap&&g.ap.n)||''});
+        stopGWatch();clearGuide();
+        try{M.trip=null;STATE.intlTrip=null;localStorage.removeItem('ainavi_intl');}catch(e2){}
+      }
+    }catch(e){}
+    try{
+      var f=M.ferry;
+      if(f&&f.stage==='drive'&&f.a&&_planFar(f.a.lat,f.a.lng)){
+        log('gd-stale',{k:'ferry',w:where||'',ap:f.na||''});
+        stopWatch();clearFerry();
+      }
+    }catch(e){}
+  }
+  M.dropStalePlans=dropStalePlans;
+
   // ---- 本体の到着発話を、この旅程の間だけ差し替える ----
   //   speakTTS の中身は触らず、外側で包む。GUIDE_ENABLE=false なら包まない。
   var ARRIVE_TXT=[
@@ -12517,6 +12683,7 @@ var INTL=(function(){
     window.speakTTS=function(text,onDone){
       try{
         if(ARRIVE_TXT.indexOf(text)>=0){
+          dropStalePlans('arrive');   // ★v50: 今の目的地と違う旅程は、ここで捨てる
           // 空港へ向かっている途中なら、本体の到着発話は飲み込んで手続きガイドへ
           if(M.GUIDE_ENABLE&&M.guide&&M.guide.stage==='drive'){
             log('gd-swallow',{k:'air'});
