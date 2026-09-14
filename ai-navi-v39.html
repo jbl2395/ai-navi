@@ -1645,7 +1645,7 @@ var NAVLOG_KEY='ainavi_navlog', NAVLOG_MAX=1000;
 //   すぐ溢れて先頭から捨てられるため、原因解析に要るタグ（トンネル・DR・リルート・案内開始）は
 //   こちらに最大 NAVKEY_MAX 件だけ残す。件数が少ないので push のたびに即 localStorage へ書き出す。
 var NAVKEY_KEY='ainavi_navkeylog', NAVKEY_MAX=100;
-var NAVKEY_RE=/^(tnl-|nav-start|dr-enter|dr-exit|dr-clamp|reroute|miss-turn-near|near-dest-reroute|startsay-|approach-|snap-o|gps-drop|straight-say)/;
+var NAVKEY_RE=/^(tnl-|nav-start|dr-enter|dr-exit|dr-clamp|reroute|miss-turn-near|near-dest-reroute|startsay-|approach-|snap-o|gps-drop|straight-say|chime|guideline)/;
 var NAVLOG_FLUSH_MS=2000;
 var NAVLOG_THROTTLE_MS={tollbranch:2000,softdir:2000,dispsnap:3000,hclamp:2000,'tnl-strict':2000,'tnl-lock':5000,'gps-drop':5000}; // 高頻度タグの間引き（他タグは間引かない）
 var _navLogBuf=null,_navLogDirty=false,_navLogFlushAt=0,_navLogThr={};
@@ -2652,7 +2652,7 @@ function _fbPrepare(unlockPlay){
     }
   }catch(e){}
 }
-function _fbPlay(type){
+function _fbPlay(type,onfail){
   try{
     var a=_fbSnd[type];
     if(!a){_fbPrepare(false);a=_fbSnd[type];}
@@ -2661,9 +2661,41 @@ function _fbPlay(type){
     a.volume=1.0;
     try{a.currentTime=0;}catch(e1){}
     var p=a.play();
-    if(p&&p.catch)p.catch(function(){});
+    // ★v51(チャイム恒久化): 旧実装は play() の拒否を握り潰して true を返していたため、
+    //   <audio>が拒否された時（バックグラウンド復帰などで再生権が切れた時）に
+    //   WebAudioへ回らず、そのまま走行中ずっと無音になっていた。拒否を検知して次へ渡す。
+    if(p&&p['catch'])p['catch'](function(_er){
+      _chimeFbBad=true;
+      try{_chimeLog('fbfail',{e:(_er&&_er.name)?String(_er.name).slice(0,12):'?'});}catch(e2){}
+      if(onfail){try{onfail();}catch(e3){}}
+    });
     return true;
   }catch(e){return false;}
+}
+
+// ============================================================
+// ★v51(純追加): チャイムの診断ログと再解錠
+//   症状: 案内の最初にチャイムが鳴らないと、以後そのトリップ中ずっと鳴らない。
+//   ・_chimeLog  … 鳴らした経路(web/fb)と失敗(fbfail)、AudioContextの状態を残す
+//   ・_chimeArm  … 画面タップ/案内開始などユーザー操作の文脈で音源を解錠し直す
+// ============================================================
+var _chimeFbBad=false,_chimeArmAt=0;
+function _chimeLog(r,ex){
+  try{
+    var o={r:r};
+    try{o.st=_audioCtx?_audioCtx.state:'none';}catch(e1){o.st='?';}
+    if(ex){for(var k in ex){if(Object.prototype.hasOwnProperty.call(ex,k))o[k]=ex[k];}}
+    _navLog('chime',o);
+  }catch(e){}
+}
+function _chimeArm(why){
+  var now=Date.now();
+  if(now-_chimeArmAt<1500)return;  // 連打スロットル
+  _chimeArmAt=now;
+  try{var c=getAudioCtx();if(c&&c.state!=='running'){c.resume()['catch'](function(){});}}catch(e){}
+  try{_fbPrepare(true);}catch(e2){}   // <audio>音源を無音再生して再生権を取り直す
+  _chimeFbBad=false;
+  _chimeLog('arm',{w:(why||'').slice(0,10)});
 }
 
 function unlockAudio(){
@@ -2747,7 +2779,18 @@ try{
 // 画面操作でも確実に復帰（初回unlockとは別の常設リスナ）
 document.addEventListener('pointerdown', function(){
   if(STATE.navActive || (typeof CHAT!=='undefined' && CHAT.active)) reviveAudioRoute();
+  // ★v51: チャイムが鳴らなかった後の最初のタップで音源を解錠し直す（引きずり防止）
+  try{ if(_chimeFbBad) _chimeArm('tap'); }catch(e){}
 }, {passive: true});
+// ★v51: バックグラウンドから戻った時もオーディオ経路を起こし直す（iOSは復帰時に
+//   AudioContextが interrupted のまま／<audio>の再生権が切れていることがある）
+try{
+  document.addEventListener('visibilitychange', function(){
+    if(document.visibilityState==='visible' && (STATE.navActive||STATE.navStarted)){
+      try{ _chimeArm('visible'); }catch(e){}
+    }
+  });
+}catch(_cve){}
 
 // ============================================================
 // ★新機能④: 電話帳管理
@@ -4085,7 +4128,7 @@ function playStartSound(type){
   var soundType = (type !== undefined) ? type : (s.startSound !== undefined ? s.startSound : 0);
   if(soundType === 0) return;
   var ctx = getAudioCtx();
-  if(!ctx){ _fbPlay(soundType); return; } // ★修正3-B: contextが作れない環境でもチャイムは鳴らす
+  if(!ctx){ _fbPlay(soundType); _chimeLog('fb-noctx'); return; } // ★修正3-B: contextが作れない環境でもチャイムは鳴らす
   function doPlayOn(c){
     try{
       switch(soundType){
@@ -4105,9 +4148,13 @@ function playStartSound(type){
   //   _audioCtx に残すため、一度陥ると走行中ずっと無音のままだった（本日の症状）。
   //   代わりに resume を投げるだけ投げて、この回の音は <audio> フォールバックで鳴らす。
   //   （毎fixの resume 試行が生きているので、機会があれば次回から WebAudio に自然復帰する）
-  if(ctx && ctx.state === 'running'){ doPlayOn(ctx); return; }
+  if(ctx && ctx.state === 'running'){ doPlayOn(ctx); _chimeLog('web'); return; }
   if(ctx){ try{ ctx.resume().catch(function(){}); }catch(e){} }
-  if(_fbPlay(soundType)) return;
+  // ★v51: <audio>が拒否されたらWebAudioへ回す（resume成功時のみ鳴る）。
+  //   同時に _chimeFbBad が立ち、次の画面タップで音源を解錠し直す。
+  if(_fbPlay(soundType,function(){
+      try{var c2=getAudioCtx();if(c2){c2.resume().then(function(){doPlayOn(c2);})['catch'](function(){});}}catch(e){}
+    })){ _chimeLog('fb'); return; }
   // フォールバックも使えない環境でのみ、従来どおり resume 完了を待って鳴らす
   var _played = false;
   try{ ctx.resume().then(function(){ if(!_played){ _played = true; doPlayOn(ctx); } }).catch(function(){}); }catch(e){}
@@ -6337,6 +6384,7 @@ function camStep(){
   c.lng+=(tg.lng-c.lng)*k;
   c.heading=lerpAngle(c.heading,tg.heading,k);
   try{map.moveCamera({center:{lat:c.lat,lng:c.lng},zoom:tg.zoom,tilt:tg.tilt,heading:c.heading});}catch(e){}
+  try{_glUpdate(c);}catch(_gle){} // ★v51: 出発ガイドラインをマーカー先端に追従させる
   var dLat=Math.abs(tg.lat-c.lat),dLng=Math.abs(tg.lng-c.lng);
   var dH=Math.abs(((tg.heading-c.heading+540)%360)-180);
   if(dLat>1e-7||dLng>1e-7||dH>0.2||STATE._camPred){STATE._camRAF=requestAnimationFrame(camStep);}
@@ -6350,6 +6398,101 @@ function setCamTarget(lat,lng,heading,zoom,tilt){
   if(!STATE._camRAF)STATE._camRAF=requestAnimationFrame(camStep);
 }
 function stopCamDriver(){if(STATE._camRAF){cancelAnimationFrame(STATE._camRAF);STATE._camRAF=null;}STATE._camCur=null;STATE._camTarget=null;STATE._camPred=null;STATE._camPrevT=0;}
+
+// ============================================================
+// ★v51(純追加): 出発ガイドライン
+//   広い駐車場などルート(青線)から離れた場所で案内を始めた時に、
+//   カイトマーカーの先端から青線の起点まで赤い直線を引き、線の中点の上に
+//   実GPSでの直線距離(m)を出し続ける。
+//   ・線の始点 = カメラ中心(= マーカー先端が乗っている点)。移動中も先端から伸び続ける
+//   ・線の色/太さ = マーカー楕円 rgba(200,30,30,0.75) / stroke-width 2.2 × 表示倍率0.5
+//   ・数字 = 実GPS位置からの距離（表示スナップ補正の影響を受けない）
+//   ・文字は地図の回転・傾きに関わらず常に画面に対して水平（マーカー方式）
+//   ・起点まで GUIDE_HIDE_M 以下になったら消し、そのルートでは二度と出さない
+//   非常口: GUIDE_LINE_ON=false で機能ごと停止
+// ============================================================
+var GUIDE_LINE_ON = true;
+var GUIDE_HIDE_M  = 20;          // これ以下になったら消す（以後そのルートでは出さない）
+var GUIDE_COLOR   = '#c81e1e';   // マーカー楕円と同じ赤
+var GUIDE_OPACITY = 0.75;        // 〃 透明度
+var GUIDE_WEIGHT  = 1.1;         // 〃 太さ(2.2 × 0.5)
+var GUIDE_FS_PORT = 10;          // 縦画面の文字サイズ（広域/詳細は11px）
+var GUIDE_FS_LAND = 13;          // 横画面の文字サイズ（広域/詳細は14px）
+var GUIDE_TICK_MS = 100;         // 再描画の間引き
+var _glPoly=null,_glMk=null,_glDone=false,_glTxt='',_glFs=0,_glAt=0;
+function _glHide(){
+  try{if(_glPoly&&_glPoly.getMap())_glPoly.setMap(null);}catch(e){}
+  try{if(_glMk&&_glMk.getMap())_glMk.setMap(null);}catch(e2){}
+}
+function _glReset(){ _glDone=false; _glTxt=''; _glAt=0; _glHide(); }
+function _glStartPt(){
+  try{
+    var st=STATE.routeSteps;
+    if(!st||!st.length)return null;
+    var pa=st[0].path;
+    if(!pa||!pa.length)return null;
+    var q=pa[0];
+    var la=(q&&typeof q.lat==='function')?q.lat():(q?q.lat:null);
+    var ln=(q&&typeof q.lng==='function')?q.lng():(q?q.lng:null);
+    if(typeof la!=='number'||typeof ln!=='number')return null;
+    return {lat:la,lng:ln};
+  }catch(e){return null;}
+}
+function _glIcon(txt,fs){
+  var w=Math.round(txt.length*fs*0.68+12), h=fs+8;
+  var svg='<svg xmlns="http://www.w3.org/2000/svg" width="'+w+'" height="'+h+'">'+
+    '<text x="'+(w/2)+'" y="'+(fs+1)+'" text-anchor="middle" font-family="Orbitron,Share Tech Mono,monospace"'+
+    ' font-weight="700" font-size="'+fs+'" fill="#ffffff" stroke="rgba(0,0,0,0.85)" stroke-width="3"'+
+    ' paint-order="stroke" stroke-linejoin="round">'+txt+'</text></svg>';
+  return {url:'data:image/svg+xml;charset=UTF-8,'+encodeURIComponent(svg),
+          scaledSize:new google.maps.Size(w,h),
+          anchor:new google.maps.Point(w/2,h+3)};  // 線の少し上に置く
+}
+function _glUpdate(cam){
+  if(!GUIDE_LINE_ON||_glDone)return;
+  var now=Date.now();
+  if(now-_glAt<GUIDE_TICK_MS)return;
+  _glAt=now;
+  var map=STATE.currentMap;
+  if(!map||!window.google||!google.maps||!google.maps.geometry){return;}
+  if(!STATE.navActive||!STATE.navStarted||STATE.navPaused){_glHide();return;}
+  try{if(document.body.classList.contains('walk-mode')){_glHide();return;}}catch(e0){}
+  // 第1ステップを通過したら役目は終わり（ルート上に乗ったとみなす）
+  if((STATE.stepIdx||0)>=1){_glDone=true;_glHide();try{_navLog('guideline',{r:'step'});}catch(e1){}return;}
+  var tgt=_glStartPt();
+  if(!tgt){_glHide();return;}
+  var la=STATE.lastLat,ln=STATE.lastLng;
+  if(typeof la!=='number'||typeof ln!=='number'){_glHide();return;}
+  var d;
+  try{
+    d=google.maps.geometry.spherical.computeDistanceBetween(
+        new google.maps.LatLng(la,ln), new google.maps.LatLng(tgt.lat,tgt.lng));
+  }catch(e2){return;}
+  if(!(d>GUIDE_HIDE_M)){
+    _glDone=true;_glHide();
+    if(d>=5){try{_navLog('guideline',{r:'end',d:Math.round(d)});}catch(e3){}} // リルート直後(起点=現在地)はログを出さない
+    return;
+  }
+  var c=cam||STATE._camCur;
+  if(!c||typeof c.lat!=='number'||typeof c.lng!=='number'){_glHide();return;}
+  var from={lat:c.lat,lng:c.lng};
+  try{
+    if(!_glPoly){
+      _glPoly=new google.maps.Polyline({clickable:false,strokeColor:GUIDE_COLOR,
+        strokeOpacity:GUIDE_OPACITY,strokeWeight:GUIDE_WEIGHT,zIndex:900});
+      try{_navLog('guideline',{r:'start',d:Math.round(d)});}catch(e4){}
+    }
+    if(_glPoly.getMap()!==map)_glPoly.setMap(map);
+    _glPoly.setPath([from,tgt]);
+    var mid={lat:(from.lat+tgt.lat)/2,lng:(from.lng+tgt.lng)/2};
+    var fs=(window.innerWidth>window.innerHeight)?GUIDE_FS_LAND:GUIDE_FS_PORT;
+    var txt=Math.round(d)+'m';
+    if(!_glMk){_glMk=new google.maps.Marker({clickable:false,zIndex:901,icon:_glIcon(txt,fs)});_glTxt=txt;_glFs=fs;}
+    if(_glMk.getMap()!==map)_glMk.setMap(map);
+    if(txt!==_glTxt||fs!==_glFs){_glMk.setIcon(_glIcon(txt,fs));_glTxt=txt;_glFs=fs;}
+    _glMk.setPosition(mid);
+  }catch(e5){}
+}
 
 // ★ 自宅マーカー描画（座標が分かっている時に即時描画。ジオコード結果はキャッシュして再利用）
 function _drawHomeMarker(map,lat,lng){
@@ -7948,6 +8091,8 @@ function startGpsTracking(map,destGeo,fromStepIdx){
   STATE._tunLastFix=null;STATE._tunSpd=[];STATE._tunRejFrom=0;STATE._tunRejN=0; // ★トンネル対策(v3): ゴースト判定/速度サンプルもリセット
   STATE._tunCum=null;STATE._tunCumFor=null;
   try{_navLog('nav-start',{dest:(STATE.currentDest||'').slice(0,24),n:(STATE.routeSteps||[]).length,toll:!!STATE._routeHasToll});}catch(_nse){}
+  try{_chimeArm('navstart');}catch(_ca1){} // ★v51: 案内開始のたびにチャイム音源を解錠し直す
+  try{_glReset();}catch(_gl1){}            // ★v51: 出発ガイドラインを新ルートで出し直す
   try{if(typeof INTL!=='undefined'&&INTL.dropStalePlans)INTL.dropStalePlans('navstart');}catch(_dsp){} // ★v50: 目的地と違う海外/離島の旅程が残っていたら破棄
   try{_headLogReset();STATE._hlGpsAt=0;STATE._hlInfo=null;}catch(_hlr){} // ★v22(方位診断): 案内開始で記録数と直前方位をリセット
   try{_navSaveTrip();}catch(_nst){} // ★v19(B): 案内が始まった時点で保存 // ★実走ログ(v3): 走行の区切り
@@ -9240,6 +9385,7 @@ function exitNav(){
   stopCamDriver(); // ★カメラ補間ループ停止
   if(STATE._drTimer){clearInterval(STATE._drTimer);STATE._drTimer=null;} if(STATE._drActive)_drExit(); // ★対策A: 推定走行も終了
   STATE.navMode='map';STATE.svPano=null;STATE.routeSteps=[];STATE.stepIdx=0;
+  try{_glDone=true;_glHide();}catch(_gl2){} // ★v51: 出発ガイドラインを消す
   if(window.speechSynthesis)window.speechSynthesis.cancel();
   if(STATE.homeMarker){STATE.homeMarker.setMap(null);STATE.homeMarker=null;}
   if(STATE.parkingMarker){STATE.parkingMarker.setMap(null);STATE.parkingMarker=null;}
@@ -9799,6 +9945,7 @@ function onWalkBtn(){
 WALK._sterilizeCar=function(){
   STATE.navActive=false;STATE.navStarted=false;STATE.navPaused=false;STATE.freeRoamMode=false;
   STATE.routeSteps=[];STATE.stepIdx=0;STATE.currentDestGeo=null;
+  try{_glDone=true;_glHide();}catch(_gl3){} // ★v51: 出発ガイドラインを消す
   STATE.rerouteInProgress=false;STATE.isReroute=false;STATE.offRouteCount=0;STATE.waitingForMove=false;
   STATE.userPanActive=false;
   if(STATE.userPanTimer){clearTimeout(STATE.userPanTimer);STATE.userPanTimer=null;}
