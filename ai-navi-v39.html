@@ -6410,21 +6410,29 @@ function stopCamDriver(){if(STATE._camRAF){cancelAnimationFrame(STATE._camRAF);S
 //   ・文字は地図の回転・傾きに関わらず常に画面に対して水平（マーカー方式）
 //   ・起点まで GUIDE_HIDE_M 以下になったら消し、そのルートでは二度と出さない
 //   非常口: GUIDE_LINE_ON=false で機能ごと停止
+//   ★v52(修正): ①リルートでは一切出さない（出発時のみ）。旧実装はリルートでも
+//     _glReset() していたため、リルート地点(=起点)に線が固定されたまま自車が前進し、
+//     後ろ向きの線が一瞬出ていた。②「青線に乗った」判定をステップ番号から
+//     青線までの実距離(STATE._offNow)に変更。旧実装は駐車場内で step が 1 に
+//     進むだけで消えてしまい、出発時に線が出ないことがあった。
 // ============================================================
 var GUIDE_LINE_ON = true;
-var GUIDE_HIDE_M  = 20;          // これ以下になったら消す（以後そのルートでは出さない）
+var GUIDE_HIDE_M  = 10;          // これ以下になったら消す（以後そのルートでは出さない）
+var GUIDE_JOIN_M  = 10;          // ★v52: 青線までこの距離以下＝乗ったとみなして消す
+var GUIDE_MAX_M   = 400;         // ★v52: 起点からこれ以上離れたら打ち切り（乗らずに走り出した保険）
+var GUIDE_TTL_MS  = 180000;      // ★v52: 案内開始からこの時間で打ち切り
 var GUIDE_COLOR   = '#c81e1e';   // マーカー楕円と同じ赤
 var GUIDE_OPACITY = 0.75;        // 〃 透明度
 var GUIDE_WEIGHT  = 1.1;         // 〃 太さ(2.2 × 0.5)
 var GUIDE_FS_PORT = 10;          // 縦画面の文字サイズ（広域/詳細は11px）
 var GUIDE_FS_LAND = 13;          // 横画面の文字サイズ（広域/詳細は14px）
 var GUIDE_TICK_MS = 100;         // 再描画の間引き
-var _glPoly=null,_glMk=null,_glDone=false,_glTxt='',_glFs=0,_glAt=0;
+var _glPoly=null,_glMk=null,_glDone=false,_glTxt='',_glFs=0,_glAt=0,_glT0=0;
 function _glHide(){
   try{if(_glPoly&&_glPoly.getMap())_glPoly.setMap(null);}catch(e){}
   try{if(_glMk&&_glMk.getMap())_glMk.setMap(null);}catch(e2){}
 }
-function _glReset(){ _glDone=false; _glTxt=''; _glAt=0; _glHide(); }
+function _glReset(){ _glDone=false; _glTxt=''; _glAt=0; _glT0=Date.now(); _glHide(); } // ★v52: TTL計測の起点
 function _glStartPt(){
   try{
     var st=STATE.routeSteps;
@@ -6457,8 +6465,14 @@ function _glUpdate(cam){
   if(!map||!window.google||!google.maps||!google.maps.geometry){return;}
   if(!STATE.navActive||!STATE.navStarted||STATE.navPaused){_glHide();return;}
   try{if(document.body.classList.contains('walk-mode')){_glHide();return;}}catch(e0){}
-  // 第1ステップを通過したら役目は終わり（ルート上に乗ったとみなす）
-  if((STATE.stepIdx||0)>=1){_glDone=true;_glHide();try{_navLog('guideline',{r:'step'});}catch(e1){}return;}
+  // ★v52: リルート中／リルート直後は出さない（線の役目は出発時だけ）
+  if(STATE.isReroute||STATE.rerouteInProgress){_glDone=true;_glHide();return;}
+  // ★v52: 「青線に乗った」判定は実距離で行う（旧: stepIdx>=1 は駐車場内でも成立して消えていた）
+  if(typeof STATE._offNow==='number'&&STATE._offNow<=GUIDE_JOIN_M){
+    _glDone=true;_glHide();try{_navLog('guideline',{r:'join',off:Math.round(STATE._offNow)});}catch(e1){}return;
+  }
+  // ★v52: 乗れないまま走り続けた場合の打ち切り（後ろ向きの線を引きずらない）
+  if(_glT0&&(Date.now()-_glT0)>GUIDE_TTL_MS){_glDone=true;_glHide();try{_navLog('guideline',{r:'ttl'});}catch(e1b){}return;}
   var tgt=_glStartPt();
   if(!tgt){_glHide();return;}
   var la=STATE.lastLat,ln=STATE.lastLng;
@@ -6473,6 +6487,8 @@ function _glUpdate(cam){
     if(d>=5){try{_navLog('guideline',{r:'end',d:Math.round(d)});}catch(e3){}} // リルート直後(起点=現在地)はログを出さない
     return;
   }
+  // ★v52: 起点から大きく離れた＝乗らずに走り出した。線を引きずらないよう打ち切る
+  if(d>GUIDE_MAX_M){_glDone=true;_glHide();try{_navLog('guideline',{r:'far',d:Math.round(d)});}catch(e3b){}return;}
   var c=cam||STATE._camCur;
   if(!c||typeof c.lat!=='number'||typeof c.lng!=='number'){_glHide();return;}
   var from={lat:c.lat,lng:c.lng};
@@ -8092,7 +8108,9 @@ function startGpsTracking(map,destGeo,fromStepIdx){
   STATE._tunCum=null;STATE._tunCumFor=null;
   try{_navLog('nav-start',{dest:(STATE.currentDest||'').slice(0,24),n:(STATE.routeSteps||[]).length,toll:!!STATE._routeHasToll});}catch(_nse){}
   try{_chimeArm('navstart');}catch(_ca1){} // ★v51: 案内開始のたびにチャイム音源を解錠し直す
-  try{_glReset();}catch(_gl1){}            // ★v51: 出発ガイドラインを新ルートで出し直す
+  // ★v52: 出発ガイドラインは「出発時」だけ。リルートの nav-start では武装させない
+  //   （旧実装は無条件に _glReset() していたため、リルート地点に線が残り後ろ向きに見えた）
+  try{ if(STATE.isReroute){_glDone=true;_glHide();} else {_glReset();} }catch(_gl1){}
   try{if(typeof INTL!=='undefined'&&INTL.dropStalePlans)INTL.dropStalePlans('navstart');}catch(_dsp){} // ★v50: 目的地と違う海外/離島の旅程が残っていたら破棄
   try{_headLogReset();STATE._hlGpsAt=0;STATE._hlInfo=null;}catch(_hlr){} // ★v22(方位診断): 案内開始で記録数と直前方位をリセット
   try{_navSaveTrip();}catch(_nst){} // ★v19(B): 案内が始まった時点で保存 // ★実走ログ(v3): 走行の区切り
