@@ -2300,6 +2300,33 @@ function _tnlResayOnResume(lat,lng){
     speakTTSWithChime(msg,null,true);
   }catch(e){ try{_navLog('tnl-err',{at:'resay',e:String(e).slice(0,40)});}catch(_e){} }
 }
+// ★B(9/20): トンネルの「言い先」状態を確実に落とす。
+//   通過済み（出口を50m以上過ぎた）のトンネル／part を said=true に固定する。
+//   _tnlBuildList はリスト再構築（リルート後の再取得等）のたびに said を false に戻すので、
+//   これが無いと通過済みトンネルの予告が再武装され得る。
+//   いま中にいるトンネルには一切触れないので、トンネル内DRの _tnlSayPre は従来どおり動く。
+//   ※ _tnlPreBr は触らない。消すと _tnlResayOnResume の重複抑止（v40 問題2）が壊れるため。
+function _tnlClearSaid(why,lat,lng){
+  if(!TNL_ENABLE)return;
+  try{
+    var list=STATE._tnlList;
+    if(!list||!list.length)return;
+    var la=(typeof lat==='number')?lat:STATE.lastLat;
+    var ln=(typeof lng==='number')?lng:STATE.lastLng;
+    if(la===null||la===undefined||ln===null||ln===undefined)return;
+    var s=_tnlProgressS(la,ln);
+    if(s===null)return;
+    var n=0;
+    for(var i=0;i<list.length;i++){
+      var t=list[i],p=t.parts;
+      if(p)for(var q=0;q<p.length;q++){ if(!p[q].said&&s>=p[q].sOut-50){p[q].said=true;n++;} }
+      if(!t.said&&s>=t.sOut-50){t.said=true;n++;}
+    }
+    var cl=0;
+    if(STATE._tnlNow&&s>=STATE._tnlNow.sOut-50){STATE._tnlNow=null;cl=1;}
+    if(n||cl||why!=='advance')_navLog('tnl-clear',{why:why,s:Math.round(s),n:n,now:cl});
+  }catch(e){ try{_navLog('tnl-err',{at:'clear',e:String(e).slice(0,40)});}catch(_e){} }
+}
 // ★v35(1): keepRaw=true（リルート時）は取得済みのトンネル形状(_tnlRaw)を捨てず、
 //   新しい青線へ投影し直すだけにする。8/29の実走では、リルートのたびに形状を捨てて
 //   取り直し、その1回が Overpass のタイムアウトで失敗した結果、以降トンネルが
@@ -8156,6 +8183,7 @@ function _drExit(){
   STATE._drActive=false; STATE._drCur=null; STATE._drPath=null; STATE._drHeadT=0;
   STATE._drClampM=null; STATE._drClamped=false; // ★v7: 分岐越え防止クランプをリセット
   STATE._drExitAt=Date.now(); // ★トンネル落ち対策(v2): DR解除時刻。以後 NOALT_AFTER_DR_MS の間は代替ルート要求を止める
+  try{_tnlClearSaid('drexit');}catch(_tcx){} // ★B(9/20): GPS復帰＝通過済みトンネルの「言い先」を落とす
 }
 function _drTick(onNavPos){
   if(!STATE.navActive||STATE.navPaused){ if(STATE._drActive)_drExit(); return; }
@@ -8366,6 +8394,7 @@ function startGpsTracking(map,destGeo,fromStepIdx){
           STATE._lkOpenUntil=_lkNow+TNL_LOCK_OPEN_MS;
           STATE._lkLastAcc={lat:_lkLa,lng:_lkLn};
           STATE._lkFrom=0;STATE._lkN=0;STATE._lkLastRej=null;
+          try{_tnlClearSaid('unlock',_lkLa,_lkLn);}catch(_tcu){} // ★B(9/20): why を問わず、通過済みトンネルの「言い先」を落とす
         }
         // ★v35(3B): トンネル情報が無い時の保険。高速走行中の精度急悪化は採らずに即DRへ。
         else if(GPSDROP_ENABLE&&!STATE._tnlNow&&!STATE._drClamped){
@@ -8545,7 +8574,7 @@ function startGpsTracking(map,destGeo,fromStepIdx){
               if(!STATE.spokenPhase)STATE.spokenPhase={};
               if(!STATE.spokenPhase[STATE.stepIdx])STATE.spokenPhase[STATE.stepIdx]=new Set();
               var _dPh=STATE.spokenPhase[STATE.stepIdx];
-              var _dName=_getExitName(_dLook), _dTail=(_dName?_dName+'出口です。':'有料道路出口です。');
+              var _dNm=_exitBandTail(_dLook), _dTail=_dNm.tail; // ★A(9/20): 出口名は出口ステップ由来のみ／空なら名前なし文言
               var _dBand='';
               if(_dD>1500&&_dD<=2100&&!_dPh.has('exit2k')){_dPh.add('exit2k');_dBand='exit2k';speakTTSWithChime('およそ2km先、'+_dTail);}
               else if(_dD>700&&_dD<=1200&&!_dPh.has('exit1k')){_dPh.add('exit1k');_dBand='exit1k';speakTTSWithChime('およそ1km先、'+_dTail);}
@@ -8556,7 +8585,7 @@ function startGpsTracking(map,destGeo,fromStepIdx){
                 var _dShort=(_dD<=EXIT150_SHORT_M);
                 speakTTSWithChime('まもなく、'+_dTail+((!_dShort&&_dHou)?'その先、'+_dHou+'方面です。':''),null,true);
               }
-              if(_dBand)_navLog('dr-exitband',{band:_dBand,d:Math.round(_dD),step:STATE.stepIdx});
+              if(_dBand){_navLog('dr-exitband',{band:_dBand,d:Math.round(_dD),step:STATE.stepIdx});_exitBandLog(_dBand,_dD,_dNm);}
             }
           }
         }catch(_deb){}
@@ -9019,10 +9048,12 @@ function startGpsTracking(map,destGeo,fromStepIdx){
         if(lookAheadStep&&_isTollExit(lookAheadStep)&&!_tollPassBranch){
           // ★④修正 出口: 2km / 1km / 500m（500mで「その先、料金所です」を連結。300m段は廃止）
           // ★⑧修正: 名前が取れない場合は「有料道路出口です」にフォールバック
-          var _exName=_getExitName(lookAheadStep);var _exTail=(_exName?_exName+'出口です。':'有料道路出口です。');
-          if(_farOK&&distToNext>1500&&distToNext<=2100&&!ph.has('exit2k')){ph.add('exit2k');speakTTSWithChime('およそ2km先、'+_exTail);}
-          if(_farOK&&distToNext>700&&distToNext<=1200&&!ph.has('exit1k')){ph.add('exit1k');speakTTSWithChime('およそ1km先、'+_exTail);}
-          if(_farOK&&distToNext>250&&distToNext<=600&&!ph.has('exit500')){ph.add('exit500');speakTTSWithChime('およそ500m先、'+_exTail+'その先、料金所です。');}
+          // ★A(9/20): 出口名は「出口ステップ由来」だけを使う。空・未取得なら名前なし文言（「出口です」）。
+          //   トンネル予告・直近の看板名・直近の発話など、他機能の文字列は一切流用しない。
+          var _exNm=_exitBandTail(lookAheadStep);var _exTail=_exNm.tail;
+          if(_farOK&&distToNext>1500&&distToNext<=2100&&!ph.has('exit2k')){ph.add('exit2k');_exitBandLog('2km',distToNext,_exNm);speakTTSWithChime('およそ2km先、'+_exTail);}
+          if(_farOK&&distToNext>700&&distToNext<=1200&&!ph.has('exit1k')){ph.add('exit1k');_exitBandLog('1km',distToNext,_exNm);speakTTSWithChime('およそ1km先、'+_exTail);}
+          if(_farOK&&distToNext>250&&distToNext<=600&&!ph.has('exit500')){ph.add('exit500');_exitBandLog('500m',distToNext,_exNm);speakTTSWithChime('およそ500m先、'+_exTail+'その先、料金所です。');}
           // ★EXIT150(v15): 出口150m手前で「まもなく、〇〇IC出口です。その先、〇〇方面です。」
           //   使うのは Directions API が確実に返す3つ（出口名／出口分岐までの距離／方面名）だけで、
           //   ポリライン幾何による分岐点の推定は一切使わない＝全国どのICでも同じ精度で成立する。
@@ -9033,6 +9064,7 @@ function startGpsTracking(map,destGeo,fromStepIdx){
             var _ex150Hou=_forkHoumen(lookAheadStep);
             var _ex150Short=(distToNext<=EXIT150_SHORT_M);
             _navLog('exit150',{d:Math.round(distToNext),short:_ex150Short,hou:_ex150Hou||''});
+            _exitBandLog('exit150',distToNext,_exNm);
             speakTTSWithChime('まもなく、'+_exTail+((!_ex150Short&&_ex150Hou)?'その先、'+_ex150Hou+'方面です。':''),null,true);
           }
         }else if(lookAheadStep&&_isTollEntrance(lookAheadStep)&&!_tollPassBranch){
@@ -9169,6 +9201,7 @@ function startGpsTracking(map,destGeo,fromStepIdx){
         STATE._stepDistTrack[phaseKey]=_trk;
         if(_doAdvance){
           STATE.stepIdx++;
+          try{_tnlClearSaid('advance',cur.lat(),cur.lng());}catch(_tca){} // ★B(9/20): 通過したトンネルの「言い先」を落とす
           // ★v38: 交差点を通過した直後も、曲がり切るまでは看板を出したままにする
           try{if(_XS.shown)_XS.holdUntil=Math.max(_XS.holdUntil,Date.now()+_xsCfg().holdMs);}catch(_xsa){}
           // ★v34(②): 曲がりを通過できた＝リルート不要だったので吸着を戻す
@@ -10681,6 +10714,46 @@ function _xsIsEntrance(s){
   if(/入口|入り口|料金所/.test(si))return true;
   if(/ramp/.test(s.maneuver||'')&&/(高速|有料|自動車道|expressway|highway|ＩＣ|IC|インターチェンジ)/i.test(si))return true;
   return false;
+}
+// ★A(9/20): 有料出口の帯（2km/1km/500m/まもなく）で使う出口名。
+//   入力は「出口ステップの instructions」だけ。トンネル側の状態・直近の看板名・
+//   直近の発話文字列など、他機能の文字列は一切参照しない純関数にする
+//   （名前スロットの入力源を1つに固定して「トンネル出口です」の混入を構造的に防ぐ）。
+//   意味を持たない抽出結果は「取得できなかった」と同じ扱いにして名前なし文言へ落とす。
+//   例:「府道256号 方面の出口を出る有料区間」→ 旧実装は「方面」を拾って「方面出口です」と発話していた。
+var EXITNAME_NG_RE=/^(方面|出口|入口|入り口|料金所|ランプ|本線|合流|右折|左折|直進|斜め|有料区間|この先|その先|高速|自動車道|有料道路)$/;
+var EXITNAME_ROAD_RE=/(^(国道|府道|県道|都道|道道|市道|町道|村道|主要地方道)|号線?$)/;
+function _exitBandNameOK(nm){
+  if(!nm||nm.length<2||nm.length>16)return false;
+  if(EXITNAME_NG_RE.test(nm))return false;
+  if(EXITNAME_ROAD_RE.test(nm))return false;
+  return true;
+}
+function _exitBandName(step){
+  try{
+    if(!step)return '';
+    var raw=step.instructions||'';
+    var si=stripHtml(raw);
+    // 1) 「〇〇出口」「〇〇 出口」（空白・英字IC等を許容）
+    var m=si.match(/([\u4e00-\u9fa5\u3040-\u309f\u30a0-\u30ffA-Za-z0-9０-９Ａ-Ｚａ-ｚ・ーＩＣ]{1,14})[\s　]*(?:の)?出口/);
+    var nm=(m&&m[1])?String(m[1]).replace(/[\s　]+/g,'').replace(/(の|を|に|で)$/,''):'';
+    if(_exitBandNameOK(nm))return nm;
+    // 2) <b>タグ（IC名）から抽出。ここも入力は同じ出口ステップの本文だけ。
+    var bolds=raw.match(/<b>[\s\S]*?<\/b>/g);
+    if(bolds)for(var i=0;i<bolds.length;i++){
+      var t=stripHtml(bolds[i]).replace(/[\s　]+/g,'').replace(/(出口|入口|入り口)$/,'').replace(/(の|を|に|で)$/,'');
+      if(_exitBandNameOK(t))return t;
+    }
+    return '';
+  }catch(e){return '';}
+}
+// 出口帯の文言と、診断ログ用の「使った名前／取得元」をまとめて返す。
+function _exitBandTail(step){
+  var nm=_exitBandName(step);
+  return {nm:nm,src:(nm?'step':'none'),tail:(nm?nm+'出口です。':'出口です。')};
+}
+function _exitBandLog(band,d,t){
+  try{_navLog('exitband',{band:band,d:Math.round(d),step:STATE.stepIdx,nm:(t&&t.nm)||'',nmsrc:(t&&t.src)||'none'});}catch(e){}
 }
 function _xsExitLabel(s){
   var si=_xsInstr(s);
