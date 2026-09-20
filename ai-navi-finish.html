@@ -3133,7 +3133,7 @@ function callGeminiYesNo(userText, callback){
 //  - 案内中:「どうされました？」→ 会話 → 目的地変更/経由地/案内再開など
 //  - 既存の一問一答フロー(processHomeMicResult等)は温存（未使用化）
 // ============================================================
-var CHAT = {active:false, isNav:false, listening:false, history:[], state:null, data:null, errCount:0, recog:null, pausedByChat:false};
+var CHAT = {active:false, isNav:false, listening:false, history:[], state:null, data:null, errCount:0, recog:null, pausedByChat:false, _waitTimer:null, _waitDefer:0};
 
 function chatGreetAndStart(isNav, greet){
   CHAT.active=true; CHAT.isNav=isNav; CHAT.history=[]; CHAT.state=null; CHAT.data=null; CHAT.errCount=0; CHAT._missCount=0; CHAT.pausedByChat=false;
@@ -3146,10 +3146,11 @@ function chatGreetAndStart(isNav, greet){
 // チャット中にマイクボタンが押された: 聞き取り中なら全終了、待機中なら再聞き取り
 function chatMicButton(){
   if(CHAT.listening){ chatStop(true); }
-  else { chatListen(); }
+  else { CHAT.errCount=0; CHAT._missCount=0; chatListen(true); } // ★マイク修正B: 読み上げ中でないので待たずに開く
 }
 
 function chatUiOn(){
+  chatWaitNoticeStop(); // ★待ち案内: 聞き取りに戻るので待ち案内は不要（録音に被せない）
   CHAT.listening=true;
   var b=document.getElementById(CHAT.isNav?'nav-mic-btn':'mic-btn');
   if(b)b.classList.add('listening');
@@ -3162,7 +3163,45 @@ function chatUiOff(){
   var v=document.getElementById('voice-overlay'); if(v)v.classList.remove('on');
 }
 
+// ============================================================
+// ★待ち案内: 応答に時間がかかっている時だけ「しばらくお待ちください」と発話する
+//   ユーザーの発話を受け取ってから応答（Gemini・場所検索）までの無言時間が長いと
+//   「聞こえていないのでは」と不安になり言い直してしまう。一定時間を超えた時だけ
+//   一度だけ案内を挟む。応答が返って何かを話した時点(chatSpeak)で自動的に取り消す。
+// ============================================================
+var CHAT_WAIT_NOTICE_MS   = 1800; // 通常の応答待ち（Gemini応答など）
+var CHAT_WAIT_SEARCH_MS   = 5000; // 「〜を探しています」の後の場所検索待ち（既に一声かけている分だけ長め）
+var CHAT_WAIT_DEFER_MS    = 700;  // 読み上げ中/聞き取り中は割り込まず、この間隔で様子見
+var CHAT_WAIT_DEFER_MAX   = 8;    // 様子見の上限
+var CHAT_WAIT_NOTICE_TEXT = 'しばらくお待ちください。';
+
+function chatWaitNoticeStop(){
+  if(CHAT._waitTimer){ clearTimeout(CHAT._waitTimer); CHAT._waitTimer=null; }
+  CHAT._waitDefer=0;
+}
+function chatWaitNoticeStart(ms){
+  chatWaitNoticeStop();
+  if(!CHAT.active) return;
+  // ★'use strict' 下なので arguments.callee は使わず名前付き関数で様子見を繰り返す
+  var _fire=function(){
+    CHAT._waitTimer=null;
+    if(!CHAT.active) return;
+    // 読み上げ中や聞き取り中は割り込まない（発話を切らない・録音に被せない）
+    if(STATE._speaking || CHAT.listening){
+      if(CHAT._waitDefer<CHAT_WAIT_DEFER_MAX){
+        CHAT._waitDefer++;
+        CHAT._waitTimer=setTimeout(_fire, CHAT_WAIT_DEFER_MS);
+      }
+      return;
+    }
+    CHAT._waitDefer=0;
+    showAiBubble(CHAT_WAIT_NOTICE_TEXT);
+    speakTTSOnly(CHAT_WAIT_NOTICE_TEXT); // 一度だけ。応答が返れば chatSpeak が上書きする
+  };
+  CHAT._waitTimer=setTimeout(_fire, ms||CHAT_WAIT_NOTICE_MS);
+}
 function chatStop(speakBye){
+  chatWaitNoticeStop(); // ★待ち案内: 会話終了時は保留中の「しばらくお待ちください」を取り消す
   var wasPaused=CHAT.pausedByChat;
   CHAT.active=false; CHAT.state=null; CHAT.data=null; CHAT.history=[]; CHAT.pausedByChat=false;
   if(CHAT.recog){try{CHAT.recog.abort();}catch(e){}CHAT.recog=null;}
@@ -3174,6 +3213,7 @@ function chatStop(speakBye){
 
 // 発話してから次の処理へ。onendedが取れない環境向けに保険タイマー併用（単発発火保証）
 function chatSpeak(text, then){
+  chatWaitNoticeStop(); // ★待ち案内: 応答が出たので待ち案内は取り消す
   showAiBubble(text);
   if(typeof then!=='function'){ speakTTSOnly(text); return; }
   var fired=false;
@@ -3233,7 +3273,23 @@ var CHAT_MISS_RETRY_MS  = 450;
 var CHAT_SILENCE_RETRY_MS = 350; // ★本当に無音だった時のリトライ間隔
 // ★マイク修正A: 頭欠けで結果ゼロだった1回目だけ、間を置かず即再リッスン（体感の途切れ防止）
 var CHAT_FIRSTMISS_RETRY_MS = 120;
-function chatListen(){
+// ★マイク修正B（1回で反応しない問題の本修正）:
+//   症状: 「どちらに行かれます？」の直後に行き先を言っても無反応で、2〜3回言い直すと通る。
+//   原因は大きく2つ。
+//    (1) 認識エンジンが中間結果(interim)までは取れているのに isFinal を返さないままセッションが
+//        終わる（iOS Safari で頻発）。旧実装は isFinal 以外を捨てていたので、聞き取れていた
+//        発話がそのまま消え「無音」として扱われていた。
+//    (2) マイクが開いた合図のビープ音や環境音を発話開始とみなし、ユーザーが話し始める前に
+//        エンジンが区切ってセッションを終えてしまう（start直後の早期終了）。
+//   対策:
+//    A. 中間結果を常に保持し、確定が来ないまま終了したら中間結果をそのまま採用する。
+//    B. 中間結果が一定時間更新されなくなったら stop() を呼んで確定を促す（ぶら下がり防止）。
+//    C. start直後の早期終了（発話も結果も無い）は「無音」と数えず、待たずに即再リッスンする。
+var CHAT_FINALIZE_MS = 1500; // 中間結果が止まってからこの時間で確定を促す
+var CHAT_EARLYEND_MS = 1500; // start からこの時間内の空終了は頭欠け扱い（errCountに数えない）
+var CHAT_INTERIM_MIN = 2;    // 中間結果を採用する最低文字数
+var CHAT_QUICK_SETTLE_MS = 120; // 読み上げ直後でない再リッスンの待ち（TTSが鳴っていないので短くてよい）
+function chatListen(quick){
   if(!CHAT.active) return;
   var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
   if(!SR){ chatStop(false); alert('このブラウザは音声認識に対応していません'); return; }
@@ -3241,11 +3297,37 @@ function chatListen(){
   //   （エンジンが早く音声取得を開始する）。確定は onresult 内で isFinal を見て判定する。
   var r=new SR(); r.lang='ja-JP'; r.continuous=false; r.interimResults=true; r.maxAlternatives=5;
   var got=false, audioOpened=false, beeped=false, _tBeep=null, _tStart=0;
+  // ★マイク修正B: 中間結果の保持と、確定を促す保険タイマー
+  var _interim='', _interimRes=null, _tFin=null, _spoke=false;
   // ★マイク修正A: 合図ビープは1セッションにつき1回だけ。多重防止。
   var _doBeep=function(){
     if(beeped)return; beeped=true;
     if(_tBeep){ clearTimeout(_tBeep); _tBeep=null; }
     chatBeep();
+  };
+  var _clearTimers=function(){
+    if(_tBeep){ clearTimeout(_tBeep); _tBeep=null; }
+    if(_tFin){ clearTimeout(_tFin); _tFin=null; }
+  };
+  // ★マイク修正B-A: 確定/中間どちらの経路からでも1回だけ会話へ引き渡す
+  var _accept=function(transcript, res, how){
+    if(got||!CHAT.active) return;
+    var t=String(transcript==null?'':transcript).trim();
+    if(!t) return;
+    got=true; _clearTimers(); chatUiOff();
+    if(res) _captureSpeechAlts(res); // ★人名照合用に代替候補を控える
+    _navLog('mic',{ev:how||'result',ms:Date.now()-_tStart});
+    chatOnUser(t);
+  };
+  // ★マイク修正B-B: 中間結果が止まったら stop() で確定を促す。
+  //   （エンジンが isFinal を返さずぶら下がったままになる端末への保険）
+  var _armFinalize=function(){
+    if(_tFin) clearTimeout(_tFin);
+    _tFin=setTimeout(function(){
+      _tFin=null;
+      if(got||!CHAT.active) return;
+      try{ r.stop(); }catch(e){} // 確定が来なければ onend で中間結果を採用する
+    }, CHAT_FINALIZE_MS);
   };
   // ★マイクが実際に開いたかを検知（onaudiostart/onspeechstartが来れば本当に録音開始）。
   //   ★マイク修正A: 開いたこの瞬間にピッを鳴らす。
@@ -3255,26 +3337,39 @@ function chatListen(){
     _doBeep();
   };
   r.onspeechstart=function(){ audioOpened=true; _doBeep(); };
+  // ★マイク修正B: 発話終了が通知されたら確定待ちの保険を張る
+  r.onspeechend=function(){ if(!got&&_interim) _armFinalize(); };
   r.onresult=function(e){
-    // ★マイク修正: interimResults=true のため、確定(isFinal)結果のみ処理。中間結果では待ち続ける。
     var res=e.results[e.results.length-1];
-    if(!res||!res.isFinal) return;
-    _captureSpeechAlts(res); // ★人名照合用に代替候補を控える
-    got=true; chatUiOff();
-    _navLog('mic',{ev:'result',ms:Date.now()-_tStart});
-    chatOnUser(res[0].transcript);
+    if(!res) return;
+    _spoke=true;
+    if(res.isFinal){ _accept(res[0]&&res[0].transcript, res, 'result'); return; }
+    // ★マイク修正B-A: 中間結果は捨てずに保持（確定が来なければこれを採用する）
+    var t=(res[0]&&res[0].transcript)||'';
+    if(t){ _interim=t; _interimRes=res; _armFinalize(); }
   };
   r.onerror=function(){ chatUiOff(); };
   r.onend=function(){
     chatUiOff();
-    if(_tBeep){ clearTimeout(_tBeep); _tBeep=null; }
+    _clearTimers();
     if(!CHAT.active||got) return;
+    // ★マイク修正B-A（本丸）: 確定結果は来なかったが中間結果は聞き取れていた
+    //   → 言い直しを求めず、その場で採用する。これで「1回目が無反応」が解消する。
+    var iv=(_interim||'').trim();
+    if(iv.length>=CHAT_INTERIM_MIN){
+      CHAT.errCount=0; CHAT._missCount=0;
+      _accept(iv, _interimRes, 'interim');
+      return;
+    }
+    var _elapsed=Date.now()-_tStart;
     // ★iOSの取りこぼし: マイクが開かないまま即終了→無音とみなさず静かに再試行（errCountは増やさない）
-    if(!audioOpened){
+    // ★マイク修正B-C: 開いてもstart直後に発話ゼロで終わった場合（合図音や環境音で早期に
+    //   区切られた等）も同じ扱い。ユーザーはこれから話すので、待たずに即開き直す。
+    if(!audioOpened || (!_spoke && _elapsed<CHAT_EARLYEND_MS)){
       CHAT._missCount=(CHAT._missCount||0)+1;
-      _navLog('mic',{ev:'noopen',n:CHAT._missCount});
+      _navLog('mic',{ev:(audioOpened?'earlyend':'noopen'),n:CHAT._missCount,ms:_elapsed});
       if(CHAT._missCount<=CHAT_MISS_RETRY_MAX){
-        setTimeout(function(){ if(CHAT.active) chatListen(); }, CHAT_MISS_RETRY_MS);
+        setTimeout(function(){ if(CHAT.active) chatListen(true); }, audioOpened?CHAT_FIRSTMISS_RETRY_MS:CHAT_MISS_RETRY_MS);
         return;
       }
       CHAT._missCount=0; // 取りこぼしが続く時は通常の無音処理へフォールバック
@@ -3282,7 +3377,7 @@ function chatListen(){
     // ここからはマイクは開いたが本当に無音だった場合
     // ★段階的リカバリ: 1回目=即再リッスン(次のピッが合図) → 2回目=声で促して再リッスン → 3回目=ボタン要求
     CHAT.errCount++;
-    _navLog('mic',{ev:'empty',n:CHAT.errCount,ms:Date.now()-_tStart});
+    _navLog('mic',{ev:'empty',n:CHAT.errCount,ms:_elapsed});
     if(CHAT.errCount>=3){
       CHAT.errCount=0;
       chatSpeak('続ける場合はマイクボタンを押してください。', null); // チャットは待機状態で維持
@@ -3290,7 +3385,7 @@ function chatListen(){
       chatSpeak('もう一度お願いします。', chatListen);
     } else {
       // ★マイク修正A: 1回目の空振りは頭欠けの可能性が高いので、間を置かず即再リッスン
-      setTimeout(function(){ if(CHAT.active) chatListen(); }, CHAT_FIRSTMISS_RETRY_MS);
+      setTimeout(function(){ if(CHAT.active) chatListen(true); }, CHAT_FIRSTMISS_RETRY_MS);
     }
   };
   CHAT.recog=r; chatUiOn();
@@ -3298,6 +3393,7 @@ function chatListen(){
   try{ if(typeof _unlockedAudio!=='undefined'&&_unlockedAudio){ _unlockedAudio.pause(); } }catch(e){}
   // ★マイク修正A: セッション切替を待つ → まずマイクを開く → 開いた瞬間にピッ。
   //   ビープは信頼再生経路(chatBeep=_chatBeepAudio)。onaudiostartが来ない端末は保険タイマーで鳴らす。
+  // ★マイク修正B: 読み上げ直後でない再リッスン(quick)は音声セッションの切替が不要なので待たない。
   setTimeout(function(){
     if(!CHAT.active){ chatUiOff(); return; }
     _tStart=Date.now();
@@ -3305,11 +3401,12 @@ function chatListen(){
       r.start();
       _tBeep=setTimeout(function(){ _tBeep=null; if(CHAT.active&&!got) _doBeep(); }, CHAT_BEEP_FALLBACK_MS);
     }catch(ex){ chatUiOff(); chatSpeak('マイクボタンを押して話してください。', null); }
-  }, CHAT_LISTEN_SETTLE_MS);
+  }, quick?CHAT_QUICK_SETTLE_MS:CHAT_LISTEN_SETTLE_MS);
 }
 
 function chatOnUser(text){
   CHAT.errCount=0; CHAT._missCount=0;
+  chatWaitNoticeStart(CHAT_WAIT_NOTICE_MS); // ★待ち案内: 応答が遅い時だけ「しばらくお待ちください」
   if(CHAT.state==='confirm_dest'){ chatHandleDestAnswer(text); return; }
   if(CHAT.state==='confirm_call'){ chatHandleCallAnswer(text); return; }
   if(CHAT.state==='confirm_go'){ chatHandleGoAnswer(text); return; }
@@ -3373,7 +3470,7 @@ function chatCallGemini(userText){
         if(pn) STATE._lastNamedPlace=pn;
         CHAT.history.push({role:'model',parts:[{text:'（記憶: '+pn+'）'}]});
         if(txt){ CHAT.history.push({role:'model',parts:[{text:txt}]}); chatSpeak(txt, chatListen); }
-        else { chatListen(); }
+        else { chatListen(true); } // ★マイク修正B: 発話していないので待たずに開く
         return;
       }
       CHAT.history.push({role:'model',parts:[{text:'（操作: '+fc.name+'）'}]});
@@ -3457,6 +3554,7 @@ function chatPlaceFlow(placeName, isWaypoint){
   if(!placeName){ chatSpeak('どちらへ行きますか？', chatListen); return; }
   if(CHAT.isNav && !STATE.navPaused){ pauseNav(); CHAT.pausedByChat=true; }
   chatSpeak(placeName+'を探しています。', null);
+  chatWaitNoticeStart(CHAT_WAIT_SEARCH_MS); // ★待ち案内: 場所検索が長引いた時だけ一声かける
   chatPlacesSearch(placeName, null, function(cands){
     if(!CHAT.active) return;
     chatPresentCandidate(cands, 0, isWaypoint, placeName);
@@ -3468,6 +3566,7 @@ function chatNearbyFlow(keyword){
   if(CHAT.isNav && !STATE.navPaused){ pauseNav(); CHAT.pausedByChat=true; }
   var go=function(la,ln){
     chatSpeak('近くの'+keyword+'を探しています。', null);
+    chatWaitNoticeStart(CHAT_WAIT_SEARCH_MS); // ★待ち案内: 周辺検索が長引いた時だけ一声かける
     chatPlacesSearch(keyword, (la?{lat:la,lng:ln}:null), function(cands){
       if(!CHAT.active) return;
       chatPresentCandidate(cands, 0, CHAT.isNav, keyword);
