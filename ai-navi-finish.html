@@ -1914,6 +1914,9 @@ var TNL_MERGE_GAP_M     = 200;     // ★v31(60→200) この隙間以下で連�
 var TNL_DRSAY_PRE_M     = 400;     // ★v31 DR突入時の保険発話。突入地点が入口のこのm数手前までなら言う
 var TNL_INSAY_ENABLE    = true;    // ★v32 true=「入口を過ぎてから予告」。false で v31 の「入口手前で予告」に戻る
 var TNL_IN_M            = 150;     // ★v32 入口を何m過ぎた地点で予告するか（実fix／DRの仮想位置のどちらでも判定）
+var TNL_SAY_REM_M       = 200;     // ★D(9/20) 予告時に出口まで残しておきたい距離(m)。短いトンネルは入口寄りで営る
+var TNL_SAY_MIN_LEN_M   = 200;     // ★D(9/20) これより短いトンネルは予告しない（「その先〜」が付く場合を除く）
+var TNL_SAY_MIN_REM_M   = 120;     // ★D(9/20) 残りがこれ未満なら予告しない（言い終わる前に出てしまう）
 var TNL_FETCH_TIMEOUT_MS= 12000;
 var TNL_RETRY_MS        = 20000; // ★v35(1) 取得失敗後、この間隔をあけて再挑戦
 var TNL_MAX_TRY         = 4;     // ★v35(1) 1ルートあたりの取得試行回数の上限
@@ -2146,6 +2149,15 @@ function _tnlDistPhrase(m){
     return (km===Math.floor(km)?String(km):km.toFixed(1))+'km';
   }catch(e){ return (Math.round((m||0)/50)*50)+'m'; }
 }
+// ★D(9/20): 予告点は「入口から TNL_IN_M」固定ではなく、出口まで TNL_SAY_REM_M を残せる位置にする。
+//   9/20実走: len=80 で d=-4、len=300 で d=-154 と、どちらも出口間際で営っていた。
+//   長いトンネル（len≥350）は従来どおり 150m 地点で変わらない。
+function _tnlInOffsetM(len){
+  try{
+    var v=Math.min(TNL_IN_M,(len||0)-TNL_SAY_REM_M);
+    return v>0?v:0;
+  }catch(e){return TNL_IN_M;}
+}
 // ★v31: 予告の本文組み立てと発話（_tnlTick とDR突入時の保険で共用）。言ったら true。
 function _tnlSayPre(t,s,src){
   try{
@@ -2175,6 +2187,13 @@ function _tnlSayPre(t,s,src){
     var b=_tnlBranchAfter(_tOut,TNL_BRANCH_M),tail='';
     if(b){var ph=_tnlBranchPhrase(b.step);if(ph)tail='その先、'+ph.full;}
     if(tail)msg+=tail;
+    // ★D(9/20): 出口間際の予告は無意味（言い終わる前に出る）ので黙る。
+    //   ただし「その先、〇〇出口です」が付く場合は情報価値があるので従来どおり発話する。
+    //   said は既に立ててあるので、このトンネルを後から言い直すことはない。
+    if(!tail&&(_tLen<TNL_SAY_MIN_LEN_M||rem<TNL_SAY_MIN_REM_M)){
+      try{_navLog('tnl-skip',{len:Math.round(_tLen),rem:Math.round(rem),step:STATE.stepIdx,src:src||'fix',pi:_pi,pn:(_pl?_pl.length:1)});}catch(_e){}
+      return false;
+    }
     // ★v40(問題2): 「その先、〇〇出口です。」まで言い切った分岐は、GPS復帰時の
     //   言い直し(_tnlResayOnResume)の対象から外す＝同じ出口を2回言わない。
     //   9/2実走: 06:45:35 tnl-pre(tail=その先、海南IC出口です) → 06:47:01 tnl-resay で重複。
@@ -2227,7 +2246,7 @@ function _tnlTick(lat,lng){
       var t=list[i];
       if(s>=t.sIn-5&&s<=t.sOut)now=t;
       // ★v32: 発話点を「入口の手前」→「入口を TNL_IN_M 過ぎた地点」へ。取得・判定は従来のまま。
-      var _hit=TNL_INSAY_ENABLE?(s>=t.sIn+TNL_IN_M):((t.sIn-s)<=TNL_PRE_M);
+      var _hit=TNL_INSAY_ENABLE?(s>=t.sIn+_tnlInOffsetM(t.len||(t.sOut-t.sIn))):((t.sIn-s)<=TNL_PRE_M); // ★D(9/20)
       if(!t.said&&_hit&&s<t.sOut-50){ _tnlSayPre(t,s,'fix'); }
     }
     STATE._tnlNow=now;
@@ -2247,7 +2266,7 @@ function _tnlTickDr(lat,lng){
       var t=list[i];
       // ★v39h(C): 統合トンネルは part がまだ残っていれば t.said でも呼ぶ（part側で判定）
       var _pend=false;try{var _p=t.parts;if(_p)for(var _q=0;_q<_p.length;_q++){if(!_p[_q].said&&s<_p[_q].sOut-50){_pend=true;break;}}}catch(_pe){}
-      if((!t.said||_pend)&&s>=t.sIn+TNL_IN_M&&s<t.sOut-50){ _tnlSayPre(t,s,'dr'); }
+      if((!t.said||_pend)&&s>=t.sIn+_tnlInOffsetM(t.len||(t.sOut-t.sIn))&&s<t.sOut-50){ _tnlSayPre(t,s,'dr'); } // ★D(9/20)
     }
   }catch(e){ try{_navLog('tnl-err',{at:'tickdr',e:String(e).slice(0,40)});}catch(_e){} }
 }
@@ -8563,11 +8582,11 @@ function startGpsTracking(map,destGeo,fromStepIdx){
         try{
           var _dNext=STATE.routeSteps[STATE.stepIdx];
           var _dLook=(STATE.stepIdx+1<STATE.routeSteps.length)?STATE.routeSteps[STATE.stepIdx+1]:null;
-          if(_dNext&&_dNext.end_location&&_dLook&&_isTollExit(_dLook)){
+          if(_dNext&&_dNext.end_location&&_dLook&&_xsIsExit(_dLook)){   // ★DR出口帯修復(9/20): _isTollExit はこの行では未定義だった
             // 本体ブロックの _tollPassBranch と同じ判定（料金所通過後の分岐は出口ブラケットの対象外）
             var _dInstr=stripHtml(_dLook.instructions||'');
             var _dMerge=(/merge/.test(_dLook.maneuver||'')||/合流|本線/.test(_dInstr));
-            var _dBranch=(isFork(_dLook)||/fork|slight|ramp|keep|merge/.test(_dLook.maneuver||''));
+            var _dBranch=(_drIsFork(_dLook)||/fork|slight|ramp|keep|merge/.test(_dLook.maneuver||''));   // ★DR出口帯修復(9/20): isFork はこの行では未定義だった
             var _dPass=(!!_forkHoumen(_dLook)&&_dBranch&&!_dMerge&&/料金所/.test(_dInstr)&&!/入口|入り口/.test(_dInstr));
             if(!_dPass){
               var _dD=google.maps.geometry.spherical.computeDistanceBetween(cur,_dNext.end_location);
@@ -10723,6 +10742,20 @@ function _xsIsEntrance(s){
 //   例:「府道256号 方面の出口を出る有料区間」→ 旧実装は「方面」を拾って「方面出口です」と発話していた。
 var EXITNAME_NG_RE=/^(方面|出口|入口|入り口|料金所|ランプ|本線|合流|右折|左折|直進|斜め|有料区間|この先|その先|高速|自動車道|有料道路)$/;
 var EXITNAME_ROAD_RE=/(^(国道|府道|県道|都道|道道|市道|町道|村道|主要地方道)|号線?$)/;
+// ★DR出口帯修復(9/20): onNavPos 内の isFork / _isTollExit は
+//   if(!pos._dr){…} ブロックの中で定義されているのに、DRの出口帯はそれより前の行で
+//   呼んでいたため、DR中の呼び出しでは undefined → TypeError → try/catch で握り潰され、
+//   2km/1km/500m/まもなく が一度も発話されていなかった（dr-exitband ログもゼロ）。
+//   DR側からはこのグローバル版を使う（isFork 本体は変更しない）。
+function _drIsFork(step){
+  try{
+    if(!step)return false;
+    var m=step.maneuver||'';
+    if(/fork|slight/.test(m))return true;
+    if(!/left|right|u-turn/.test(m)&&_softDirOK(step)&&!step._geomDir)return true;
+    return false;
+  }catch(e){return false;}
+}
 function _exitBandNameOK(nm){
   if(!nm||nm.length<2||nm.length>16)return false;
   if(EXITNAME_NG_RE.test(nm))return false;
@@ -10747,22 +10780,60 @@ function _exitBandName(step){
     return '';
   }catch(e){return '';}
 }
+// ★C(9/20): 出口ステップの「〇〇 方面の出口を出る」から方面名を取る。
+//   _forkHoumen は roadRe で「府道256号」のような道路名を落とす（地名だけ返す）ので
+//   出口の言い先には使えない。ここは道路名も含めて拾う＝「府道256号方面の出口です」。
+//   「〇〇方面です」を作っている _forkHoumen は一切変更しない。
+function _exitHoumenOK(nm){
+  if(!nm||nm.length<2||nm.length>16)return false;
+  if(EXITNAME_NG_RE.test(nm))return false;
+  return true;
+}
+function _exitHoumenName(step){
+  try{
+    if(!step)return '';
+    var raw=step.instructions||'';
+    if(raw.indexOf('方面')<0)return '';
+    // 1) 「…方面」直前の <b>…</b> 群（_houmenBolds は turnname で実績のある並び判定）
+    var bs=_houmenBolds(raw),out=[],i;
+    for(i=0;i<bs.length&&out.length<2;i++){
+      var t=(bs[i]||'').replace(/[\s　]+/g,'');
+      if(_exitHoumenOK(t)&&out.indexOf(t)<0)out.push(t);
+    }
+    if(out.length)return out.join('・');
+    // 2) 保険: <b> が無い実データ用にプレーン文の「〇〇 方面」を拾う
+    var si=stripHtml(raw);
+    var m=si.match(/([\u4e00-\u9fa5\u30a0-\u30ffA-Za-z0-9０-９]{2,12}(?:[／\/・･][\u4e00-\u9fa5\u30a0-\u30ffA-Za-z0-9０-９]{1,8})*)[\s　]*方面/);
+    var p=(m&&m[1])?m[1].replace(/[\s　]+/g,''):'';
+    return _exitHoumenOK(p)?p:'';
+  }catch(e){return '';}
+}
 // 出口帯の文言と、診断ログ用の「使った名前／取得元」をまとめて返す。
 function _exitBandTail(step){
   var nm=_exitBandName(step);
-  return {nm:nm,src:(nm?'step':'none'),tail:(nm?nm+'出口です。':'出口です。')};
+  if(nm)return {nm:nm,src:'step',tail:nm+'出口です。'};
+  // ★C(9/20): IC名が無ければ出口ステップの方面名を使う＝「府道256号方面の出口です」
+  var hou=_exitHoumenName(step);
+  if(hou)return {nm:hou+'方面',src:'houmen',tail:hou+'方面の出口です。'};
+  return {nm:'',src:'none',tail:'出口です。'};
 }
 function _exitBandLog(band,d,t){
   try{_navLog('exitband',{band:band,d:Math.round(d),step:STATE.stepIdx,nm:(t&&t.nm)||'',nmsrc:(t&&t.src)||'none'});}catch(e){}
 }
+// ★C(9/20): 「府道256号 方面の出口を出る有料区間」から「方面」だけを拾い、
+//   看板に「方面IC出口」と出していた（9/20実走 12:27:15 xsign nm:"方面IC出口"）。
+//   IC名として妥当なときだけIC名にし、取れなければ方面名を「〇〇方面」として出す。
+//   発話側（_exitBandTail）と同じ抽出器を使うので、看板と発話が食い違わない。
 function _xsExitLabel(s){
-  var si=_xsInstr(s);
-  var m=si.match(/([\u4e00-\u9fa5\u3040-\u309f\u30a0-\u30ffA-Za-z0-9０-９Ａ-Ｚａ-ｚ・ーＩＣ]{1,14})[\s　]*(?:の)?出口/);
-  var nm=(m&&m[1])?String(m[1]).replace(/[\s　]+/g,'').replace(/(の|を|に|で)$/,''):'';
-  if(!nm||nm.length<2)return '出口';
-  if(nm.length>8)nm=nm.slice(-8);
-  if(!/(IC|ＩＣ|JCT|ＪＣＴ|インター|インターチェンジ)$/.test(nm))nm+='IC';
-  return nm+'出口';
+  var nm=_exitBandName(s);
+  if(nm){
+    if(nm.length>8)nm=nm.slice(-8);
+    if(!/(IC|ＩＣ|JCT|ＪＣＴ|インター|インターチェンジ)$/.test(nm))nm+='IC';
+    return nm+'出口';
+  }
+  var hou=_exitHoumenName(s);
+  if(hou)return (hou.length>8?hou.slice(-8):hou)+'方面';
+  return '出口';
 }
 function _xsEntranceLabel(s,nxt){
   var srcs=[_xsInstr(s),_xsInstr(nxt)];
