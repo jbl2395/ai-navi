@@ -635,7 +635,7 @@ body:not(.nav-mode) #x-sign{display:none !important;}
     </div>
     <div class="sett-row" style="flex-direction:column;align-items:flex-start;">
       <div class="sett-lbl-main" style="margin-bottom:6px;">表示を始める距離</div>
-      <div class="sett-lbl-sub" style="margin-bottom:8px;">この距離まで近づいたら看板を出し、曲がり切るまで出したままにする</div>
+      <div class="sett-lbl-sub" style="margin-bottom:8px;">一般道の右左折は「まもなく」（間に合わない時は直前）の発話と同時に出します。これより遠くでは出さない上限です。有料道路・方面分岐はこの距離で出します</div>
       <input type="range" id="xs-show-slider" min="60" max="400" step="10" value="110" oninput="setXSShow(this.value)">
       <div id="xs-show-val" style="font-size:11px;color:rgba(0,200,255,0.7);margin-top:4px;">110m</div>
     </div>
@@ -645,6 +645,30 @@ body:not(.nav-mode) #x-sign{display:none !important;}
       <input type="range" id="xs-uturn-slider" min="3" max="30" step="1" value="10" oninput="setXSUturn(this.value)">
       <div id="xs-uturn-val" style="font-size:11px;color:rgba(0,200,255,0.7);margin-top:4px;">10km</div>
     </div>
+  </div>
+  <div class="sett-sec">
+    <div class="sett-sec-ttl">⏱ 発話タイミング（速度連動）</div>
+    <div class="sett-lbl-sub" style="margin-bottom:8px;">一般道のみ。「何m手前」ではなく「何秒手前」で言います。速度が上がると従来の距離（110m/80m）で頭打ちになるので、約50km/h以上は従来と同じ動作です。</div>
+    <div class="sett-row">
+      <div class="sett-lbl">
+        <div class="sett-lbl-main">低速時にタイミングを詰める</div>
+        <div class="sett-lbl-sub">徐行中に「まもなく」が早すぎるのを直す</div>
+      </div>
+      <div class="tog on" id="tog-spdadj" onclick="toggleSpdAdj()"></div>
+    </div>
+    <div class="sett-row" style="flex-direction:column;align-items:flex-start;">
+      <div class="sett-lbl-main" style="margin-bottom:6px;">「まもなく〇方向です」</div>
+      <div class="sett-lbl-sub" style="margin-bottom:8px;">交差点の何秒手前で言うか（下限25m）</div>
+      <input type="range" id="spdadj-soon-slider" min="4" max="15" step="0.5" value="8" oninput="setSpdAdjSoon(this.value)">
+      <div id="spdadj-soon-val" style="font-size:11px;color:rgba(0,200,255,0.7);margin-top:4px;">8.0秒手前</div>
+    </div>
+    <div class="sett-row" style="flex-direction:column;align-items:flex-start;">
+      <div class="sett-lbl-main" style="margin-bottom:6px;">直前の「〇方向です」</div>
+      <div class="sett-lbl-sub" style="margin-bottom:8px;">曲がる直前の何秒手前で言うか（下限12m。「まもなく」より必ず後になるよう自動で調整します）</div>
+      <input type="range" id="spdadj-lead-slider" min="2" max="8" step="0.5" value="4.5" oninput="setSpdAdjLead(this.value)">
+      <div id="spdadj-lead-val" style="font-size:11px;color:rgba(0,200,255,0.7);margin-top:4px;">4.5秒手前</div>
+    </div>
+    <div id="spdadj-preview" style="font-size:11px;color:rgba(0,200,255,0.55);margin-top:2px;line-height:1.6;"></div>
   </div>
   <div class="sett-sec">
     <div class="sett-sec-ttl">🚇 トンネル（GPSロスト時）</div>
@@ -1000,6 +1024,54 @@ var START_REROUTE_GRACE_MS = 25000;
 //   一般道の低速路が多く、110m手前だと早すぎる＝40m進んだ 70m 手前で言う。
 var SOON_SAY_M        = 110;  // 交差点名 or 方面名がある場合（従来どおり）
 var SOON_SAY_NONAME_M = 80;   // 名前が何も取れない場合 ★v49(9/11要望): 70→80（10m早く）。看板の表示開始も同じ値
+// ============================================================
+// ★v54(9/21要望): 低速時の発話位置を「距離固定」→「時間基準」へ（一般道のみ）
+//   症状: 狭い道を徐行(15km/h前後)している時、「まもなく」が110m/80m手前の固定距離で
+//         鳴るため 16〜22秒も手前になり、体感では交差点がまだ遠い。
+//   考え方: 「何m手前」ではなく「何秒手前」で言う。ただし上限は従来の距離のままなので、
+//         速度が上がると自然に従来値へ頭打ちになる＝約50km/h以上は今までと完全に同じ。
+//   適用範囲: 一般道のみ。有料区間(_tollSpan)のステップでは一切適用しない。
+//   ・まもなく = 速度 × soonSec（下限 SPDADJ_MIN_SOON_M、上限 従来の110m/80m）
+//   ・直前     = 速度 × leadSec（下限 SPDADJ_MIN_LEAD_M、上限 従来の 25〜45m+18m）
+//   soonSec > leadSec ／ 下限も soon > lead なので、2つの発話の順序は必ず保たれる。
+//   GPSが速度を返さない時（停車直後など）は従来の固定距離へフォールバック。
+var SPDADJ_DEF        = {on:true, soonSec:8, leadSec:4.5};
+var SPDADJ_MIN_SOON_M = 25;   // 「まもなく」の下限(m)。これより手前では言わない
+var SPDADJ_MIN_LEAD_M = 12;   // 「直前の方向」の下限(m)
+var SPDADJ_GAP_SEC    = 1.5;  // まもなくと直前の最低の間隔(秒)。スライダーを詰めても順序が壊れないように
+function _spdAdjCfg(){
+  var c={};try{c=(loadSt().spdadj)||{};}catch(e){c={};}
+  var o={};for(var k in SPDADJ_DEF){o[k]=(c[k]!==undefined&&c[k]!==null)?c[k]:SPDADJ_DEF[k];}
+  o.soonSec=Math.min(15,Math.max(4,Number(o.soonSec)||SPDADJ_DEF.soonSec));
+  o.leadSec=Math.min(8,Math.max(2,Number(o.leadSec)||SPDADJ_DEF.leadSec));
+  // 順序の保証: 直前は必ず「まもなく」より後（最低 SPDADJ_GAP_SEC 秒あける）
+  if(o.leadSec>o.soonSec-SPDADJ_GAP_SEC)o.leadSec=Math.max(2,o.soonSec-SPDADJ_GAP_SEC);
+  return o;
+}
+function _spdAdjSaveCfg(patch){
+  var c={};try{c=(loadSt().spdadj)||{};}catch(e){c={};}
+  for(var k in patch)c[k]=patch[k];
+  try{saveSt({spdadj:c});}catch(e){}
+}
+// 一般道か（有料区間のステップが絡むなら false＝速度連動を効かせない）
+function _spdAdjRoadOK(a,b){
+  try{
+    if(!STATE._routeHasToll)return true;
+    if(a&&a._tollSpan)return false;
+    if(b&&b._tollSpan)return false;
+    return true;
+  }catch(e){return false;}
+}
+// base=従来の距離。ok=一般道 / spd=実測速度(m/s、取れなければ null)
+function _spdAdjM(base,spd,sec,minM,ok){
+  if(!ok)return base;
+  var C=_spdAdjCfg();
+  if(!C.on)return base;
+  if(spd===null||spd===undefined||isNaN(spd)||!(spd>0))return base; // 速度不明＝従来どおり
+  var m=spd*sec;
+  if(m>=base)return base;   // 上限＝従来値。速い時は今までと同じ
+  return Math.max(minM,m);
+}
 // ★開始アプローチ(修正4): 案内開始時、現在地がルート青線から APPROACH_ENTER_M 超離れている場合は
 //   「開始前アプローチ状態」とみなす。駐車場や敷地内で案内開始した典型シーン。
 //   この間は開始発話（「ルート案内を開始します…」）を完全発話した後、リルートも距離帯案内も全て無言。
@@ -2513,7 +2585,7 @@ function navLogText(filter){
     var a=_navLogLoad()||[],out=[];
     for(var i=0;i<a.length;i++){
       var x=a[i];
-      if(filter==='dr'&&!/^(dr-|tun-|reroute|rejoin|harvest|headprobe|headvia|headsrc|head0|head-|dispsnap|tnl-|turnname|alive|boot|nav-|jserr|jsrej|net|life|resume-|backnear|xsign|uturn-|yomi-)/.test(x.tag))continue;
+      if(filter==='dr'&&!/^(dr-|tun-|reroute|rejoin|harvest|headprobe|headvia|headsrc|head0|head-|dispsnap|tnl-|turnname|alive|boot|nav-|jserr|jsrej|net|life|pshow|soonadj|leadadj|soonskip|stepadv|resume-|backnear|xsign|uturn-|yomi-)/.test(x.tag))continue;
       out.push(x.t+' ['+x.tag+'] '+(x.d?JSON.stringify(x.d):''));
     }
     // ★v31(B案): 先頭に重要ログ枠を付ける（走行ログが溢れても消えない分）
@@ -2613,6 +2685,16 @@ try{
   });
   window.addEventListener('pagehide',function(ev){
     _navLog('life',{s:'pagehide',p:!!(ev&&ev.persisted)});_navLogFlush(true);
+  });
+  // ★v53(9/21 診断): boot の nt:"back_forward" だけでは
+  //   「バックグラウンドから戻っただけ(bfcache復帰)」と
+  //   「iOSがWebプロセスを落として履歴から復元した(メモリ回収)」が区別できない。
+  //   pageshow は boot ログより後に出るので、別行 pshow として記録する。
+  //     p:true                      = bfcache から復帰＝ページは生きていた（クラッシュではない）
+  //     p:false かつ nt:back_forward = 文書を読み直している＝プロセスが落ちて復元された（メモリ回収）
+  //   ms は boot からの経過ミリ秒（初回ロードなら数百ms、復帰なら 0 付近）。記録するだけで挙動は不変。
+  window.addEventListener('pageshow',function(ev){
+    try{_navLog('pshow',{p:!!(ev&&ev.persisted),nt:_navType(),ms:Date.now()-_bootAt});}catch(_e){}
   });
   document.addEventListener('freeze',function(){_navLog('life',{s:'freeze'});_navLogFlush(true);});
   document.addEventListener('resume',function(){_navLog('life',{s:'resume'});});
@@ -9071,6 +9153,15 @@ function startGpsTracking(map,destGeo,fromStepIdx){
         // ★v41: 名前が取れない分岐だけ発話位置を 110m→70m へ（看板の表示開始110mは従来どおり）
         var _soonNamed=!!(aheadTurnName||_hasHoumen||(STATE._houmenSoon&&STATE._houmenSoon[phaseKey]));
         var _soonSayM=_soonNamed?SOON_SAY_M:SOON_SAY_NONAME_M;
+        // ★v54(9/21): 一般道は「何m手前」ではなく「何秒手前」で言う。
+        //   徐行時に110m/80mでは早すぎる（15km/hで16〜22秒手前）ため、速度×soonSec へ。
+        //   上限は上の従来値なので、約50km/h以上では今までと完全に同じ距離になる。
+        var _spdNow=(pos.coords.speed!==null&&pos.coords.speed!==undefined&&!isNaN(pos.coords.speed)&&pos.coords.speed>0)?pos.coords.speed:null;
+        var _spdAdjOK=_spdAdjRoadOK(nextStep,lookAheadStep)&&!_isTollNodeEff;
+        var _soonSayBase=_soonSayM;
+        _soonSayM=_spdAdjM(_soonSayBase,_spdNow,_spdAdjCfg().soonSec,SPDADJ_MIN_SOON_M,_spdAdjOK);
+        // 看板(青)の表示開始は「まもなく」に連動させる＝看板だけが先行して出るのを防ぐ（v42の趣旨を維持）
+        STATE._soonAdjM=Math.round(_soonSayM);
         if(aheadIsTurn&&!_isTollNodeEff&&!_aheadIsMerge&&distToNext>10&&distToNext<=_soonSayM&&!ph.has('50m')){
           // ★開始ホールド: 開始発話の再生中は割り込まない。フェーズ(ph)を消費せず
           //   保留フラグだけ立て、ホールド解除後の次tickでこのブロックが再発火する。
@@ -9078,6 +9169,9 @@ function startGpsTracking(map,destGeo,fromStepIdx){
           else{
           ph.add('50m');
           ph.add('rampforkSoon'); // ★合流修正: この後のrampfork用まもなく帯との二重発話防止
+          // ★v54: 実走で体感と突き合わせるための記録（base=従来距離／use=実際に使った距離）
+          try{_navLog('soonadj',{d:Math.round(distToNext),base:Math.round(_soonSayBase),use:Math.round(_soonSayM),
+            spd:(_spdNow===null?null:Math.round(_spdNow*3.6)),ok:!!_spdAdjOK,step:STATE.stepIdx});}catch(_sae){}
           _nearAnnouncePreempt(); // 保留中の開始/リルート案内を破棄しゲートを開ける
           var msgSoon='まもなく';
           // ★4点修正②: 700m/300m帯・リルート初回で「〇〇方面です」と案内したステップは
@@ -9087,8 +9181,14 @@ function startGpsTracking(map,destGeo,fromStepIdx){
           var _soonBody=_hsTxt?('、'+_houmenPhrase(_hsTxt,lookAheadStep,aheadTurnDir)):_dirOrHoumen(aheadTurnDir,aheadIsFork,aheadTurnName); // ★改⑤／★方向付き方面＝「まもなく、左方向、〇〇方面です。」
           if(/方面/.test(_soonBody))ph.add('turnLead'); // 方面で完結＝直前方向を抑止
           msgSoon+=_soonBody;
-          msgSoon+=_soonNext();
+          // ★v55: 「その先、〇方向です」で次の曲がりまで言った場合は、次ステップに印を付ける。
+          //   次の区間に入った時のプリセットで「もう予告済み」と分かるようにするため（従来の110m判定を維持）。
+          var _soonNextTxt=_soonNext();
+          msgSoon+=_soonNextTxt;
+          if(_soonNextTxt){try{var _chK=phaseKey+1;if(!STATE.spokenPhase[_chK])STATE.spokenPhase[_chK]=new Set();STATE.spokenPhase[_chK].add('chainSoon');}catch(_che){}}
           speakTTSWithChime(msgSoon,null,true);
+          // ★v55: 看板を発話と同じ周回で出す（従来は次の周回＝約1秒遅れ／前の周回の距離で先行）
+          try{_xsTick(distToNext,lookAheadStep,aheadIsTurn,aheadIsFork);}catch(_xss){}
           }
         }
         // ★修正4→★合流修正: rampfork対象分岐の「まもなく」段。従来は方向が取れない分岐
@@ -9260,14 +9360,24 @@ function startGpsTracking(map,destGeo,fromStepIdx){
         // ★ 交差点直前 方向のみ（time-to-turn, ★⑧8m前倒し: 低速33m〜高速53m）
         var _spdLead=(pos.coords.speed!==null&&pos.coords.speed!==undefined&&!isNaN(pos.coords.speed)&&pos.coords.speed>0)?pos.coords.speed:0;
         var _leadDist=Math.max(TURN_LEAD_MIN_M,Math.min(TURN_LEAD_MAX_M,_spdLead*TURN_LEADTIME_SEC))+18;
+        // ★v54(9/21): 一般道は直前発話も時間基準へ。従来式は下限43mなので徐行だと約10秒手前になる。
+        //   速度×leadSec（下限12m）。上限は上の従来式なので約50km/h以上では今までと同じ。
+        //   leadSec は _spdAdjCfg 側で必ず soonSec より小さくなるよう丸めてあるので順序は崩れない。
+        var _leadBase=_leadDist;
+        var _leadAdjOK=_spdAdjRoadOK(nextStep,lookAheadStep)&&!_isTollNodeEff;
+        _leadDist=_spdAdjM(_leadBase,(_spdLead>0?_spdLead:null),_spdAdjCfg().leadSec,SPDADJ_MIN_LEAD_M,_leadAdjOK);
         // ★合流修正: 合流(merge)ノードには直前方向を発話しない（「本線に入ったあたりで左方向です」の根絶）
         if(aheadIsTurn&&!_isTollNodeEff&&!_aheadIsMerge&&distToNext>0&&distToNext<=_leadDist&&!ph.has('turnLead')){
           // ★開始ホールド: 開始発話の再生中は割り込まない（ph未消費で次tick再発火）
           if(STATE._startHold){STATE._holdNearPending=true;}
           else{
           ph.add('turnLead');
+          // ★v54: 実走検証用（base=従来式の距離／use=実際に使った距離）
+          try{_navLog('leadadj',{d:Math.round(distToNext),base:Math.round(_leadBase),use:Math.round(_leadDist),
+            spd:Math.round(_spdLead*3.6),ok:!!_leadAdjOK,step:STATE.stepIdx});}catch(_lae){}
           _nearAnnouncePreempt(); // ★修正1: 直前発話は開始/リルートゲートより優先
           speakTTS(_dirPhrase(aheadTurnDir,aheadIsFork));
+          try{_xsTick(distToNext,lookAheadStep,aheadIsTurn,aheadIsFork);}catch(_xsl){} // ★v55: 直前で初めて看板を出す場合も同時に
           _snapHoldOn(lookAheadStep); // ★v34(②): この曲がりの間は見た目スナップを止める（一般道のみ）
           }
         }
@@ -9278,15 +9388,32 @@ function startGpsTracking(map,destGeo,fromStepIdx){
         // 到達時の方向発話はここでは行わない（上のturnLead=time-to-turnで実施済み）。
         if(!STATE._stepDistTrack)STATE._stepDistTrack={};
         var _trk=STATE._stepDistTrack[phaseKey]||{min:Infinity,prev:Infinity};
-        var _doAdvance=false;
-        if(distToNext<10){_doAdvance=true;}
-        else if(_trk.min<=30&&distToNext>_trk.prev+2){_doAdvance=true;}
+        var _doAdvance=false,_advWhy='';
+        if(distToNext<10){_doAdvance=true;_advWhy='near';}
+        else if(_trk.min<=30&&distToNext>_trk.prev+2){_doAdvance=true;_advWhy='recede';}
         // ★トンネル対策(v6): DR中はステップ進行を止めているため、GPS復帰時に実位置が
         //   先のステップに乗っていたら1fixずつ追いつかせる（通過検知の取りこぼし＝無音固着の防止）。
-        else if(STATE._drCatchTo!=null&&STATE.stepIdx<STATE._drCatchTo){_doAdvance=true;}
+        else if(STATE._drCatchTo!=null&&STATE.stepIdx<STATE._drCatchTo){_doAdvance=true;_advWhy='drcatch';}
         _trk.min=Math.min(_trk.min,distToNext);_trk.prev=distToNext;
         STATE._stepDistTrack[phaseKey]=_trk;
         if(_doAdvance){
+          // ★v55(9/21 オークワ→自宅): 直前の方向発話を言わないまま右左折を通過させない。
+          //   v54で直前が速度連動になり、低速では 30m より手前(19km/h で24m)まで待つようになった。
+          //   一方この区間送りは「30m以内に入った後に2m遠ざかったら通過」なので、交差点の点(ノード)が
+          //   走る線から少し横にずれていると、24mに届く前に区間が進み、直前が一度も鳴らない。
+          //   最終の曲がりではそのまま到着判定(110m)に入って無言で終わっていた。
+          //   → recede で通過させる瞬間に直前が未発話なら、先に言ってから進める。
+          try{
+            if(_advWhy==='recede'&&aheadIsTurn&&_fwdOK&&!STATE._startHold&&!ph.has('turnLead')
+               &&!(typeof _isTollNodeEff!=='undefined'&&_isTollNodeEff)&&!(typeof _aheadIsMerge!=='undefined'&&_aheadIsMerge)){
+              ph.add('turnLead');
+              try{_navLog('leadadj',{d:Math.round(distToNext),min:Math.round(_trk.min),why:'adv',step:STATE.stepIdx});}catch(_lae2){}
+              _nearAnnouncePreempt();
+              speakTTS(_dirPhrase(aheadTurnDir,aheadIsFork));
+              try{_xsTick(distToNext,lookAheadStep,aheadIsTurn,aheadIsFork);}catch(_xsa2){}
+            }
+          }catch(_lgE){}
+          try{_navLog('stepadv',{from:STATE.stepIdx,why:_advWhy,d:Math.round(distToNext),min:Math.round(_trk.min)});}catch(_sae2){}
           STATE.stepIdx++;
           try{_tnlClearSaid('advance',cur.lat(),cur.lng());}catch(_tca){} // ★B(9/20): 通過したトンネルの「言い先」を落とす
           // ★v38: 交差点を通過した直後も、曲がり切るまでは看板を出したままにする
@@ -9325,7 +9452,20 @@ function startGpsTracking(map,destGeo,fromStepIdx){
                 var _nph=STATE.spokenPhase[STATE.stepIdx];
                 if(_nDist<750)_nph.add('1km');
                 if(_nDist<350) _nph.add('300m');
-                if(_nDist<110)  _nph.add('50m'); // ★まもなくを20m手前へ＝110mに変更
+                // ★v55(9/21): 「まもなく」を飛ばす判定を、実際に「まもなく」を言う距離（速度連動）に合わせる。
+                //   旧: 固定110m。v54で徐行時のまもなくは40m前後になったのに、区間に入った時点で
+                //   110m以内だと「言ったこと」にされ、看板だけ出て無言になっていた（自宅手前 50m で入区）。
+                //   新: 一般道は速度連動の距離未満の時だけ飛ばす（＝本当に間に合わない時だけ直前に任せる）。
+                //   前の「まもなく」で「その先、〇方向です」まで言っていた曲がりは予告済みなので従来どおり110m。
+                var _nChain=_nph.has('chainSoon');
+                var _nLook=(STATE.stepIdx+1<STATE.routeSteps.length)?STATE.routeSteps[STATE.stepIdx+1]:null;
+                var _nSpd=(typeof _spdLead==='number'&&_spdLead>0)?_spdLead:null;
+                var _nSoonM=_nChain?SOON_SAY_M:_spdAdjM(SOON_SAY_M,_nSpd,_spdAdjCfg().soonSec,SPDADJ_MIN_SOON_M,_spdAdjRoadOK(_nStep,_nLook));
+                if(_nDist<_nSoonM){
+                  _nph.add('50m');
+                  _nph.add('soonSkip'); // ★v55: 入区プリセットで飛ばした印（看板は直前と同時に出す）
+                  try{_navLog('soonskip',{step:STATE.stepIdx,d:Math.round(_nDist),use:Math.round(_nSoonM),ch:_nChain?1:0});}catch(_ske){}
+                }
               }
             }catch(e){}
             // ★V修正: 旧「高速出口です。＋生instructions」発話は削除（2km/1km/500mの段階アナウンスと重複し二重発話の原因だった）
@@ -9742,6 +9882,7 @@ function initSettPanel(){
   var decl=s.declination!==undefined?s.declination:0;
   var ds=document.getElementById('declination-slider');if(ds){ds.value=decl;document.getElementById('declination-val').textContent=(decl>=0?'+':'')+decl+'°';}
   try{renderXSign();}catch(_xsr){} // ★v38: 交差点看板の設定を反映
+  try{renderSpdAdj();}catch(_sar){} // ★v54: 発話タイミング（速度連動）の設定を反映
   try{renderDrGain();}catch(_dgr){} // ★v47: トンネル仮想速度の倍率を反映
   try{var _tsm=document.getElementById('tog-shortmode');if(_tsm)_tsm.classList.toggle('on',shortModeEnabled());}catch(_smr){} // ★v39c: 近距離最短モードのトグルを反映
   renderProbeTune(); // ★v20: リルート調整の現在値を表示
@@ -10992,8 +11133,23 @@ function _xsPlanOf(d,step,isTurn,isFork,C,farOK){
   //   v41で発話だけ110m→70mに遅らせたため、看板が40m先行して出ていた
   //   （9/4実走 17:03:28 xsign d:109 → 発話は70m地点／低速だと30秒近い先行）。
   var rawNm=_xsNameOf(step);
-  var _xsShowM=(hou||_xsBaseName(rawNm))?C.showM:Math.min(C.showM,SOON_SAY_NONAME_M);
-  if(!farOK&&d>_xsShowM)return null;
+  // ★v54(9/21): 名前なし看板の表示開始は「まもなく」の実距離に追従させる。
+  //   速度連動で発話が33m手前になっても看板だけ80m手前から出ていると、v42で直した
+  //   「看板が発話より先行する」状態に戻るため。名前/方面がある看板は従来どおり設定値(showM)。
+  var _soonNow=(typeof STATE._soonAdjM==='number'&&STATE._soonAdjM>0)?STATE._soonAdjM:SOON_SAY_NONAME_M;
+  var _xsShowM=(hou||_xsBaseName(rawNm))?C.showM:Math.min(C.showM,_soonNow);
+  // ★v55(9/21要望): 一般道の右左折は「看板が出る＝何か喋る」に揃える（名前あり・なし共通）。
+  //   その区間で「まもなく」を実際に言った（または開始/リルート発話で言ったことになっている）か、
+  //   直前の方向発話を言った時にだけ出す。入区時に「まもなく」を飛ばした曲がりは直前と同時。
+  //   「表示を始める距離」スライダーは上限として残す（これより遠くでは出さない）。
+  //   有料区間・緑看板・方向の無い分岐は従来どおり距離で出す。
+  var _xsSync=isTurn&&!green&&_spdAdjRoadOK(STATE.routeSteps[STATE.stepIdx],step);
+  if(_xsSync&&!farOK){
+    var _xph=(STATE.spokenPhase&&STATE.spokenPhase[STATE.stepIdx])||null;
+    var _xSaid=!!_xph&&(_xph.has('turnLead')||(_xph.has('50m')&&!_xph.has('soonSkip')));
+    if(!_xSaid)return null;
+    if(d>C.showM)return null;
+  }else if(!farOK&&d>_xsShowM)return null;
   var deg=_xsAngleOf(step);
   var isCross=_xsIsCrossName(rawNm);
   var nm=_xsBaseName(rawNm);
@@ -11452,6 +11608,45 @@ function setDrGain(v){
   n=Math.min(DR_GAIN_MAX,Math.max(DR_GAIN_MIN,n));
   try{saveSt({drGain:n});}catch(e){}
   var el=document.getElementById('dr-gain-val');if(el)el.textContent=n.toFixed(2)+'倍';
+}
+// ★v54(9/21): 発話タイミング（速度連動）の設定UI
+function renderSpdAdj(){
+  var C=_spdAdjCfg();
+  var t=document.getElementById('tog-spdadj');if(t)t.classList.toggle('on',!!C.on);
+  var s=document.getElementById('spdadj-soon-slider');if(s)s.value=C.soonSec;
+  var sv=document.getElementById('spdadj-soon-val');if(sv)sv.textContent=C.soonSec.toFixed(1)+'秒手前';
+  var l=document.getElementById('spdadj-lead-slider');if(l)l.value=C.leadSec;
+  var lv=document.getElementById('spdadj-lead-val');if(lv)lv.textContent=C.leadSec.toFixed(1)+'秒手前';
+  _spdAdjPreview();
+}
+// 実際に何m手前になるかを速度別に見せる（体感合わせをスライダー上で確認できるように）
+function _spdAdjPreview(){
+  var el=document.getElementById('spdadj-preview');if(!el)return;
+  var C=_spdAdjCfg();
+  if(!C.on){el.textContent='オフ＝従来どおり（まもなく110m／名前なし80m、直前43〜63m）の固定距離です。';return;}
+  var out=[],kmh=[10,15,20,30,40,50];
+  for(var i=0;i<kmh.length;i++){
+    var v=kmh[i]/3.6;
+    var sn=_spdAdjM(SOON_SAY_M,v,C.soonSec,SPDADJ_MIN_SOON_M,true);
+    var ld=_spdAdjM(Math.max(TURN_LEAD_MIN_M,Math.min(TURN_LEAD_MAX_M,v*TURN_LEADTIME_SEC))+18,v,C.leadSec,SPDADJ_MIN_LEAD_M,true);
+    out.push(kmh[i]+'km/h → まもなく'+Math.round(sn)+'m／直前'+Math.round(ld)+'m');
+  }
+  el.innerHTML=out.join('<br>');
+}
+function toggleSpdAdj(){
+  var C=_spdAdjCfg();var v=!C.on;_spdAdjSaveCfg({on:v});
+  var t=document.getElementById('tog-spdadj');if(t)t.classList.toggle('on',v);
+  _spdAdjPreview();
+}
+function setSpdAdjSoon(v){
+  var n=parseFloat(v);if(!isFinite(n))n=SPDADJ_DEF.soonSec;
+  _spdAdjSaveCfg({soonSec:n});
+  renderSpdAdj();
+}
+function setSpdAdjLead(v){
+  var n=parseFloat(v);if(!isFinite(n))n=SPDADJ_DEF.leadSec;
+  _spdAdjSaveCfg({leadSec:n});
+  renderSpdAdj();
 }
 // ★v39: Ｕターン警告のしきい値(km)
 function setXSUturn(v){
