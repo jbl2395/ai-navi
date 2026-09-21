@@ -635,7 +635,7 @@ body:not(.nav-mode) #x-sign{display:none !important;}
     </div>
     <div class="sett-row" style="flex-direction:column;align-items:flex-start;">
       <div class="sett-lbl-main" style="margin-bottom:6px;">表示を始める距離</div>
-      <div class="sett-lbl-sub" style="margin-bottom:8px;">この距離まで近づいたら看板を出し、曲がり切るまで出したままにする</div>
+      <div class="sett-lbl-sub" style="margin-bottom:8px;">一般道の右左折は「まもなく」（間に合わない時は直前）の発話と同時に出します。これより遠くでは出さない上限です。有料道路・方面分岐はこの距離で出します</div>
       <input type="range" id="xs-show-slider" min="60" max="400" step="10" value="110" oninput="setXSShow(this.value)">
       <div id="xs-show-val" style="font-size:11px;color:rgba(0,200,255,0.7);margin-top:4px;">110m</div>
     </div>
@@ -2521,7 +2521,7 @@ function navLogText(filter){
     var a=_navLogLoad()||[],out=[];
     for(var i=0;i<a.length;i++){
       var x=a[i];
-      if(filter==='dr'&&!/^(dr-|tun-|reroute|rejoin|harvest|headprobe|headvia|headsrc|head0|head-|dispsnap|tnl-|turnname|alive|boot|nav-|jserr|jsrej|net|life|pshow|soonadj|leadadj|resume-|backnear|xsign|uturn-|yomi-)/.test(x.tag))continue;
+      if(filter==='dr'&&!/^(dr-|tun-|reroute|rejoin|harvest|headprobe|headvia|headsrc|head0|head-|dispsnap|tnl-|turnname|alive|boot|nav-|jserr|jsrej|net|life|pshow|soonadj|leadadj|soonskip|stepadv|resume-|backnear|xsign|uturn-|yomi-)/.test(x.tag))continue;
       out.push(x.t+' ['+x.tag+'] '+(x.d?JSON.stringify(x.d):''));
     }
     // ★v31(B案): 先頭に重要ログ枠を付ける（走行ログが溢れても消えない分）
@@ -9113,8 +9113,14 @@ function startGpsTracking(map,destGeo,fromStepIdx){
           var _soonBody=_hsTxt?('、'+_houmenPhrase(_hsTxt,lookAheadStep,aheadTurnDir)):_dirOrHoumen(aheadTurnDir,aheadIsFork,aheadTurnName); // ★改⑤／★方向付き方面＝「まもなく、左方向、〇〇方面です。」
           if(/方面/.test(_soonBody))ph.add('turnLead'); // 方面で完結＝直前方向を抑止
           msgSoon+=_soonBody;
-          msgSoon+=_soonNext();
+          // ★v55: 「その先、〇方向です」で次の曲がりまで言った場合は、次ステップに印を付ける。
+          //   次の区間に入った時のプリセットで「もう予告済み」と分かるようにするため（従来の110m判定を維持）。
+          var _soonNextTxt=_soonNext();
+          msgSoon+=_soonNextTxt;
+          if(_soonNextTxt){try{var _chK=phaseKey+1;if(!STATE.spokenPhase[_chK])STATE.spokenPhase[_chK]=new Set();STATE.spokenPhase[_chK].add('chainSoon');}catch(_che){}}
           speakTTSWithChime(msgSoon,null,true);
+          // ★v55: 看板を発話と同じ周回で出す（従来は次の周回＝約1秒遅れ／前の周回の距離で先行）
+          try{_xsTick(distToNext,lookAheadStep,aheadIsTurn,aheadIsFork);}catch(_xss){}
           }
         }
         // ★修正4→★合流修正: rampfork対象分岐の「まもなく」段。従来は方向が取れない分岐
@@ -9303,6 +9309,7 @@ function startGpsTracking(map,destGeo,fromStepIdx){
             spd:Math.round(_spdLead*3.6),ok:!!_leadAdjOK,step:STATE.stepIdx});}catch(_lae){}
           _nearAnnouncePreempt(); // ★修正1: 直前発話は開始/リルートゲートより優先
           speakTTS(_dirPhrase(aheadTurnDir,aheadIsFork));
+          try{_xsTick(distToNext,lookAheadStep,aheadIsTurn,aheadIsFork);}catch(_xsl){} // ★v55: 直前で初めて看板を出す場合も同時に
           _snapHoldOn(lookAheadStep); // ★v34(②): この曲がりの間は見た目スナップを止める（一般道のみ）
           }
         }
@@ -9313,15 +9320,32 @@ function startGpsTracking(map,destGeo,fromStepIdx){
         // 到達時の方向発話はここでは行わない（上のturnLead=time-to-turnで実施済み）。
         if(!STATE._stepDistTrack)STATE._stepDistTrack={};
         var _trk=STATE._stepDistTrack[phaseKey]||{min:Infinity,prev:Infinity};
-        var _doAdvance=false;
-        if(distToNext<10){_doAdvance=true;}
-        else if(_trk.min<=30&&distToNext>_trk.prev+2){_doAdvance=true;}
+        var _doAdvance=false,_advWhy='';
+        if(distToNext<10){_doAdvance=true;_advWhy='near';}
+        else if(_trk.min<=30&&distToNext>_trk.prev+2){_doAdvance=true;_advWhy='recede';}
         // ★トンネル対策(v6): DR中はステップ進行を止めているため、GPS復帰時に実位置が
         //   先のステップに乗っていたら1fixずつ追いつかせる（通過検知の取りこぼし＝無音固着の防止）。
-        else if(STATE._drCatchTo!=null&&STATE.stepIdx<STATE._drCatchTo){_doAdvance=true;}
+        else if(STATE._drCatchTo!=null&&STATE.stepIdx<STATE._drCatchTo){_doAdvance=true;_advWhy='drcatch';}
         _trk.min=Math.min(_trk.min,distToNext);_trk.prev=distToNext;
         STATE._stepDistTrack[phaseKey]=_trk;
         if(_doAdvance){
+          // ★v55(9/21 オークワ→自宅): 直前の方向発話を言わないまま右左折を通過させない。
+          //   v54で直前が速度連動になり、低速では 30m より手前(19km/h で24m)まで待つようになった。
+          //   一方この区間送りは「30m以内に入った後に2m遠ざかったら通過」なので、交差点の点(ノード)が
+          //   走る線から少し横にずれていると、24mに届く前に区間が進み、直前が一度も鳴らない。
+          //   最終の曲がりではそのまま到着判定(110m)に入って無言で終わっていた。
+          //   → recede で通過させる瞬間に直前が未発話なら、先に言ってから進める。
+          try{
+            if(_advWhy==='recede'&&aheadIsTurn&&_fwdOK&&!STATE._startHold&&!ph.has('turnLead')
+               &&!(typeof _isTollNodeEff!=='undefined'&&_isTollNodeEff)&&!(typeof _aheadIsMerge!=='undefined'&&_aheadIsMerge)){
+              ph.add('turnLead');
+              try{_navLog('leadadj',{d:Math.round(distToNext),min:Math.round(_trk.min),why:'adv',step:STATE.stepIdx});}catch(_lae2){}
+              _nearAnnouncePreempt();
+              speakTTS(_dirPhrase(aheadTurnDir,aheadIsFork));
+              try{_xsTick(distToNext,lookAheadStep,aheadIsTurn,aheadIsFork);}catch(_xsa2){}
+            }
+          }catch(_lgE){}
+          try{_navLog('stepadv',{from:STATE.stepIdx,why:_advWhy,d:Math.round(distToNext),min:Math.round(_trk.min)});}catch(_sae2){}
           STATE.stepIdx++;
           try{_tnlClearSaid('advance',cur.lat(),cur.lng());}catch(_tca){} // ★B(9/20): 通過したトンネルの「言い先」を落とす
           // ★v38: 交差点を通過した直後も、曲がり切るまでは看板を出したままにする
@@ -9360,7 +9384,20 @@ function startGpsTracking(map,destGeo,fromStepIdx){
                 var _nph=STATE.spokenPhase[STATE.stepIdx];
                 if(_nDist<750)_nph.add('1km');
                 if(_nDist<350) _nph.add('300m');
-                if(_nDist<110)  _nph.add('50m'); // ★まもなくを20m手前へ＝110mに変更
+                // ★v55(9/21): 「まもなく」を飛ばす判定を、実際に「まもなく」を言う距離（速度連動）に合わせる。
+                //   旧: 固定110m。v54で徐行時のまもなくは40m前後になったのに、区間に入った時点で
+                //   110m以内だと「言ったこと」にされ、看板だけ出て無言になっていた（自宅手前 50m で入区）。
+                //   新: 一般道は速度連動の距離未満の時だけ飛ばす（＝本当に間に合わない時だけ直前に任せる）。
+                //   前の「まもなく」で「その先、〇方向です」まで言っていた曲がりは予告済みなので従来どおり110m。
+                var _nChain=_nph.has('chainSoon');
+                var _nLook=(STATE.stepIdx+1<STATE.routeSteps.length)?STATE.routeSteps[STATE.stepIdx+1]:null;
+                var _nSpd=(typeof _spdLead==='number'&&_spdLead>0)?_spdLead:null;
+                var _nSoonM=_nChain?SOON_SAY_M:_spdAdjM(SOON_SAY_M,_nSpd,_spdAdjCfg().soonSec,SPDADJ_MIN_SOON_M,_spdAdjRoadOK(_nStep,_nLook));
+                if(_nDist<_nSoonM){
+                  _nph.add('50m');
+                  _nph.add('soonSkip'); // ★v55: 入区プリセットで飛ばした印（看板は直前と同時に出す）
+                  try{_navLog('soonskip',{step:STATE.stepIdx,d:Math.round(_nDist),use:Math.round(_nSoonM),ch:_nChain?1:0});}catch(_ske){}
+                }
               }
             }catch(e){}
             // ★V修正: 旧「高速出口です。＋生instructions」発話は削除（2km/1km/500mの段階アナウンスと重複し二重発話の原因だった）
@@ -11033,7 +11070,18 @@ function _xsPlanOf(d,step,isTurn,isFork,C,farOK){
   //   「看板が発話より先行する」状態に戻るため。名前/方面がある看板は従来どおり設定値(showM)。
   var _soonNow=(typeof STATE._soonAdjM==='number'&&STATE._soonAdjM>0)?STATE._soonAdjM:SOON_SAY_NONAME_M;
   var _xsShowM=(hou||_xsBaseName(rawNm))?C.showM:Math.min(C.showM,_soonNow);
-  if(!farOK&&d>_xsShowM)return null;
+  // ★v55(9/21要望): 一般道の右左折は「看板が出る＝何か喋る」に揃える（名前あり・なし共通）。
+  //   その区間で「まもなく」を実際に言った（または開始/リルート発話で言ったことになっている）か、
+  //   直前の方向発話を言った時にだけ出す。入区時に「まもなく」を飛ばした曲がりは直前と同時。
+  //   「表示を始める距離」スライダーは上限として残す（これより遠くでは出さない）。
+  //   有料区間・緑看板・方向の無い分岐は従来どおり距離で出す。
+  var _xsSync=isTurn&&!green&&_spdAdjRoadOK(STATE.routeSteps[STATE.stepIdx],step);
+  if(_xsSync&&!farOK){
+    var _xph=(STATE.spokenPhase&&STATE.spokenPhase[STATE.stepIdx])||null;
+    var _xSaid=!!_xph&&(_xph.has('turnLead')||(_xph.has('50m')&&!_xph.has('soonSkip')));
+    if(!_xSaid)return null;
+    if(d>C.showM)return null;
+  }else if(!farOK&&d>_xsShowM)return null;
   var deg=_xsAngleOf(step);
   var isCross=_xsIsCrossName(rawNm);
   var nm=_xsBaseName(rawNm);
