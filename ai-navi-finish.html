@@ -949,6 +949,8 @@ var STATE = {
   _approachStartAt: 0,     // ★開始アプローチ: 状態開始時刻（保険タイマー用）
   _approachStartPos: null, // ★開始アプローチ: 状態開始位置（保険の走行距離用）
   _apSideArmed: false,     // ★v27 出発時の左右案内: 未発話の予約フラグ（フレッシュ開始で1回だけ）
+  _startNearArmed: false,  // ★STARTNEAR(9/21) 出発直後の近接即時案内: 未発話の予約フラグ
+  _startNearAt: 0,         // ★STARTNEAR(9/21) 案内開始時刻（これを過ぎたら「出発時」とみなさない）
   _apSideTrail: null,      // ★v27 出発時の左右案内: 直近ベクトル用の専用トレイル [{lat,lng,t}]
   _apSideSpeaking: false,  // ★v28 出発時の左右案内: 発話中（言い切るまで従来の開始発話を待たせる）
   _apSideHoldFrom: 0,      // ★v28 出発時の左右案内: 動き出した時刻（保険タイマーの起点）
@@ -1038,6 +1040,18 @@ var APSIDE_HOLD_MAX_MS   = 15000;// ★v28 保険: 動き出してからこの�
 // ★v43(9/5要望): 出発時の左右案内を「停車中でも」出す。停車中はGPS方位が取れないので
 //   判定専用のコンパスを一時的に起動する。地図の回転には一切使わない（車載の磁気で
 //   地図が傾く問題を再発させないため）。取れなければ黙って従来動作（動き出してから判定）。
+// ★STARTNEAR(9/21): 出発直後、もう青線の上（横ずれ STARTNEAR_LINE_M 以内）にいて
+//   直前に曲がり点があるのに案内が遅れる件。一般道の案内は速度に比例して
+//   先出し距離を決めるが、出発時は 0〜5km/h でしか動かないため間に合わない。
+//   9/21実走: 08:14:22 startsay-skip(rx:10,d:15) / approach-enter(off:10) で無言のまま
+//   29秒経過し、08:14:51 approach-say で d:2（曲がり終わってから）発話していた。
+//   「出発時」「0〜n km/h」「青線至近」「曲がり点が直前」の4条件が揃ったときだけ、
+//   距離を付けずに矢印看板と同時に「右方向です」と即発話する。
+var STARTNEAR_ENABLE   = true;  // false で従来動作に戻す
+var STARTNEAR_SPD_KMH  = 5;     // 0〜この速度の間だけ有効（＝出発直後。超えたら従来の帯に任せる）
+var STARTNEAR_LINE_M   = 10;    // 青線からの横ずれがこれ以内なら「もう線上」とみなす
+var STARTNEAR_TURN_M   = 30;    // 最初の曲がり点がこれ以内＝「直前にある」
+var STARTNEAR_MAX_MS   = 60000; // 案内開始からこの時間を過ぎたら「出発時」とみなさない
 var APSIDE_CP_ENABLE = true;
 var APSIDE_CP_MAX_MS = 30000;  // 案内開始からこの時間で判定用コンパスを自動解除する
 function _apCpStart(){
@@ -1142,6 +1156,56 @@ function _apSideBusy(){
     }
     return true;
   }catch(e){return false;}
+}
+// ★STARTNEAR(9/21): 出発直後・低速・青線至近・曲がり点が直前、のときだけ
+//   距離を付けずに即「右方向です」と言う。checkOffRoute（不可侵）より前で呼ぶので、
+//   アプローチ待ち(_approachMode)の無言に入る前に発話できる。
+//   発話したら従来の開始発話・APSIDE・アプローチ待ちをすべて消費済みにして二重発話を防ぐ。
+function _startNearTick(cur,spdKmh){
+  if(!STARTNEAR_ENABLE||!STATE._startNearArmed)return;
+  try{
+    if(!STATE.navActive||STATE.navPaused||STATE.rerouteInProgress)return;
+    if(STATE.stepIdx>0){STATE._startNearArmed=false;return;}   // 最初のステップを過ぎたら役目は終わり
+    if(STATE._startAnnounceDone===false)return;                // 開始発話を切らない。言い切ってから
+    if(STATE._apSideSpeaking)return;                           // 出発時の左右案内が発話中
+    var now=Date.now();
+    if(STATE._startNearAt&&(now-STATE._startNearAt)>STARTNEAR_MAX_MS){
+      STATE._startNearArmed=false;
+      try{_navLog('startnear-give',{why:'ms',ms:Math.round(now-STATE._startNearAt)});}catch(_e0){}
+      return;
+    }
+    if(!(spdKmh<=STARTNEAR_SPD_KMH)){                          // もう走り出している＝従来の帯に任せる
+      STATE._startNearArmed=false;
+      try{_navLog('startnear-give',{why:'spd',spd:Math.round(spdKmh)});}catch(_e1){}
+      return;
+    }
+    var st=(STATE.routeSteps&&STATE.stepIdx<STATE.routeSteps.length)?STATE.routeSteps[STATE.stepIdx]:null;
+    if(!st||!st.end_location)return;
+    var _f=null;try{_f=_snapFootOnRoute(cur.lat(),cur.lng());}catch(_e2){_f=null;}
+    var rx=_f?_f.d:-1;
+    if(rx<0||Math.round(rx)>STARTNEAR_LINE_M)return;           // まだ青線から離れている＝消費せず待つ
+    var d=google.maps.geometry.spherical.computeDistanceBetween(cur,st.end_location);
+    if(d>STARTNEAR_TURN_M)return;                              // 曲がり点はまだ先＝従来の距離帯に任せる
+    var dir=_apDirOf(st);
+    STATE._startNearArmed=false;                               // ここまで来たら黙る場合も１回で消費
+    if(!dir){ try{_navLog('startnear',{rx:Math.round(rx),d:Math.round(d),spd:Math.round(spdKmh),dir:'',say:'(無言)'});}catch(_e3){} return; }
+    var nx=null,nd='';
+    try{nx=(STATE.stepIdx+1<STATE.routeSteps.length)?STATE.routeSteps[STATE.stepIdx+1]:null;nd=_apDirOf(nx);}catch(_e4){nd='';}
+    var msg=dir+'です'+(nd?'。その先、'+nd+'です':'')+'。';
+    // 従来の開始発話・APSIDE・アプローチ待ちを消費済みにする
+    STATE._apSideArmed=false;
+    if(nd)STATE._apSideSaidNext=true;
+    STATE._startMoveSpoken=true;STATE._startSpokenMsg=null;STATE._startAnnounceDone=true;
+    STATE._approachArmed=false;STATE._approachMode=false;
+    try{_navLog('startnear',{rx:Math.round(rx),d:Math.round(d),spd:Math.round(spdKmh),dir:dir,nx:nd||'',say:msg.slice(0,28)});}catch(_e5){}
+    var deg=null;try{deg=_xsAngleOf(st);}catch(_e6){deg=null;}
+    if(deg===null||deg===undefined||isNaN(deg))deg=(dir==='右方向')?90:-90;
+    try{_apCpStop();}catch(_e7){}
+    try{_xsSaySign('',Math.max(-135,Math.min(135,deg)),'blue','',false);}catch(_e8){}
+    STATE._apSideSpeaking=true;
+    speakTTSOnly(msg,function(){STATE._apSideSpeaking=false;try{_navLog('apside-done',{sn:1});}catch(_e9){}});
+    setTimeout(function(){if(STATE._apSideSpeaking){STATE._apSideSpeaking=false;try{_navLog('apside-done',{sn:1,to:1});}catch(_ea){}}},6000);
+  }catch(e){ try{_navLog('startnear-err',{e:String(e).slice(0,40)});}catch(_eb){} }
 }
 // ★v27: 毎fixここを通す。トレイルを更新し、条件が揃った1回だけ「右方向です／左方向です」を発話する。
 //   checkOffRoute（不可侵）には一切触れず、外側から読むだけで完結させている。
@@ -8312,6 +8376,8 @@ function startGpsTracking(map,destGeo,fromStepIdx){
     STATE._approachMode=false; // 一旦クリア。初回fixで距離を測って必要ならtrueにする
     STATE._approachArmed=(fromStepIdx===0); // 初回fixでのアプローチ判定を予約（フレッシュ開始のみ）
     STATE._apSideArmed=(APSIDE_ENABLE&&fromStepIdx===0); // ★v27 出発時の左右案内を予約（フレッシュ開始のみ・1回だけ）
+    STATE._startNearArmed=(STARTNEAR_ENABLE&&fromStepIdx===0&&!STATE.isReroute); // ★STARTNEAR(9/21) フレッシュ開始のみ
+    STATE._startNearAt=Date.now();                      // ★STARTNEAR(9/21)
     STATE._apSideSaidNext=false;                        // ★v43
     if(STATE._apSideArmed)_apCpStart();                 // ★v43 判定専用コンパスを起動（30秒で自動解除）
     STATE._apSideTrail=null;                             // ★v27 駐車前の古い向きを拾わないよう専用トレイルを空にする
@@ -8544,6 +8610,8 @@ function startGpsTracking(map,destGeo,fromStepIdx){
           if(_audioCtx&&_audioCtx.state!=='running'){_audioCtx.resume().catch(function(){});}
         }
       }catch(_acE){}
+      // ★STARTNEAR(9/21): アプローチ待ちの無言に入る前に判定するので checkOffRoute より前。
+      if(!pos._dr)_startNearTick(cur,(pos.coords.speed||0)*3.6);
       if(!STATE.rerouteInProgress){checkOffRoute(cur);}
       if(!pos._dr){try{_tnlTick(pos.coords.latitude,pos.coords.longitude);}catch(_tne){}} // ★v30(トンネル): 取得起動＋予告発話
       else{try{_tnlTickDr(pos.coords.latitude,pos.coords.longitude);}catch(_tnd){}}         // ★v32: DR中は仮想位置で予告点を判定
