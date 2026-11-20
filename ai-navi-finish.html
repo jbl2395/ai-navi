@@ -2069,10 +2069,27 @@ var TNL_IN_M            = 150;     // ★v32 入口を何m過ぎた地点で予�
 var TNL_SAY_REM_M       = 200;     // ★D(9/20) 予告時に出口まで残しておきたい距離(m)。短いトンネルは入口寄りで営る
 var TNL_SAY_MIN_LEN_M   = 200;     // ★D(9/20) これより短いトンネルは予告しない（「その先〜」が付く場合を除く）
 var TNL_SAY_MIN_REM_M   = 120;     // ★D(9/20) 残りがこれ未満なら予告しない（言い終わる前に出てしまう）
-var TNL_FETCH_TIMEOUT_MS= 12000;
-var TNL_RETRY_MS        = 20000; // ★v35(1) 取得失敗後、この間隔をあけて再挑戦
-var TNL_MAX_TRY         = 4;     // ★v35(1) 1ルートあたりの取得試行回数の上限
+// ★v53(トンネル取得の恒久化): 11/20実走で Overpass 取得が全滅し（tnl-err timeout と
+//   "SyntaxError: The string did not match the expected pattern"＝混雑時に返るHTMLの
+//   エラーページ(429/504)を JSON として読んで失敗）、トンネルが1本も認識されず
+//   「およそ〇〇先、トンネル出口です。」が一度も出なかった。さらに4回失敗するとそのルートでは
+//   二度と取りに行かず、長いトンネルを何本も素通りしていた。
+//   対策: (1) 複数のOverpassサーバーを順に使う (2) HTTPステータス／本文を検査して記録
+//   (3) 回数上限で諦めず、間隔を広げながら案内中は取り続ける
+//   (4) 取得できたトンネル形状を端末に蓄え、通信が全滅しても前に通った道なら案内できる
+var TNL_FETCH_TIMEOUT_MS= 22000;   // ★v53(12000→22000) サーバー側 [timeout:18] より長く待つ
+var TNL_RETRY_MS        = 20000; // ★v35(1) 取得失敗後、この間隔をあけて再挑戦（★v53: 失敗回数に応じて伸ばす）
+var TNL_RETRY_MAX_MS    = 90000; // ★v53 再挑戦間隔の上限
+var TNL_MAX_TRY         = 40;    // ★v53(4→40) 実質無制限。4回で諦めて残りの道程を全部素通りしていた
 var OVERPASS_URL        = 'https://overpass-api.de/api/interpreter';
+var OVERPASS_URLS       = [      // ★v53 失敗するたびに次のサーバーへ。成功したサーバーを次回の先頭にする
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter'
+];
+var TNL_CACHE_KEY       = 'ainavi_tnl_cache';  // ★v53 トンネル形状の端末内キャッシュ
+var TNL_CACHE_MAX_PTS   = 20000;               // 同・保持する座標点数の上限（約400KB）
 // --- 平面近似の距離計算（自前・google.maps を呼ばないので大量ループでも軽い） ---
 function _tnlMPerLng(lat){return 111320*Math.cos(lat*Math.PI/180);}
 function _tnlDist(aLat,aLng,bLat,bLng,mLng){
@@ -2197,10 +2214,78 @@ function _tnlBuildList(){
       if(len<TNL_MIN_LEN_M)continue; // ★300m未満は登録しない＝発話もクランプもしない
       list.push({sIn:merged[n].sIn,sOut:merged[n].sOut,len:len,said:false,parts:merged[n].parts});
     }
+    // ★v53: 同じルートのままリストを組み直した時（端末キャッシュ→通信で取得した最新形状 等）は、
+    //   言い終えた印(said)を引き継ぐ。引き継がないとトンネル内で同じ予告をもう一度言い得る。
+    try{
+      var old=STATE._tnlList;
+      if(old&&old.length&&STATE._tnlListGen===STATE._tnlGen){
+        for(var a1=0;a1<list.length;a1++){
+          for(var b1=0;b1<old.length;b1++){
+            if(Math.abs(old[b1].sIn-list[a1].sIn)>60&&Math.abs(old[b1].sOut-list[a1].sOut)>60)continue;
+            if(old[b1].said)list[a1].said=true;
+            var op=old[b1].parts||[],np=list[a1].parts||[];
+            for(var c1=0;c1<np.length;c1++)for(var d1=0;d1<op.length;d1++){
+              if(op[d1].said&&Math.abs(op[d1].sIn-np[c1].sIn)<=60)np[c1].said=true;
+            }
+            if(STATE._tnlNow===old[b1])STATE._tnlNow=list[a1];
+          }
+        }
+      }
+    }catch(_cs){}
+    STATE._tnlListGen=STATE._tnlGen;
     STATE._tnlList=list;
     _navLog('tnl-list',{n:list.length,len:(function(){var o=[];for(var i=0;i<list.length;i++)o.push(Math.round(list[i].len));return o;})(),
       pt:(function(){var o=[];for(var i=0;i<list.length;i++)o.push((list[i].parts||[]).length);return o;})()}); // ★v39h: 統合前の本数
   }catch(e){ try{_navLog('tnl-err',{at:'build',e:String(e).slice(0,40)});}catch(_e){} }
+}
+// ★v53: 何回目の試行かで使うサーバーを決める（前回成功したサーバーを先頭に回す）
+function _tnlEndpoint(tryN){
+  var list=OVERPASS_URLS.slice(),last=null;
+  try{last=localStorage.getItem('ainavi_tnl_ep');}catch(e){}
+  if(last){var i=list.indexOf(last);if(i>0){list.splice(i,1);list.unshift(last);}}
+  return list[((tryN||1)-1)%list.length];
+}
+function _tnlEpTag(u){try{return String(u).split('/')[2].split('.').slice(-2,-1)[0]||'?';}catch(e){return '?';}}
+// ★v53: 取得できたトンネル形状を端末に蓄える（way id で重複除去、古いものから捨てる）。
+//   通信が全滅した時でも、前に通った道のトンネルなら出口予告とDRクランプが効く。
+function _tnlCacheLoad(){
+  try{var r=localStorage.getItem(TNL_CACHE_KEY);var o=r?JSON.parse(r):null;return (o&&o.w)?o:{w:[]};}catch(e){return {w:[]};}
+}
+function _tnlCachePut(ways){
+  if(!ways||!ways.length)return;
+  var c=_tnlCacheLoad(),idx={},i,n=0;
+  for(i=0;i<c.w.length;i++)idx[c.w[i].id]=i;
+  for(i=0;i<ways.length;i++){
+    var w=ways[i],id=w._id;if(id===undefined||id===null)continue;
+    var g=[];for(var k=0;k<w.length;k++)g.push(+w[k].lat.toFixed(5),+w[k].lng.toFixed(5));
+    if(idx[id]!==undefined)c.w.splice(idx[id],1,null); // 入れ替え（後で詰める）
+    c.w.push({id:id,g:g});n++;
+  }
+  var out=[],pts=0;
+  for(i=c.w.length-1;i>=0;i--){ // 新しい方から上限まで残す
+    var e=c.w[i];if(!e)continue;
+    pts+=e.g.length/2;if(pts>TNL_CACHE_MAX_PTS)break;
+    out.unshift(e);
+  }
+  try{localStorage.setItem(TNL_CACHE_KEY,JSON.stringify({w:out}));}
+  catch(_q){ try{out=out.slice(Math.floor(out.length/2));localStorage.setItem(TNL_CACHE_KEY,JSON.stringify({w:out}));}catch(_q2){} }
+}
+// キャッシュの形状を _tnlRaw と同じ形（{lat,lng}の配列の配列）で返す。ルート周辺だけに絞る。
+function _tnlCacheWays(){
+  var pts=STATE._tnlPts;if(!pts||pts.length<2)return [];
+  var mnLa=90,mxLa=-90,mnLn=180,mxLn=-180,i;
+  for(i=0;i<pts.length;i++){var p=pts[i];if(p.lat<mnLa)mnLa=p.lat;if(p.lat>mxLa)mxLa=p.lat;if(p.lng<mnLn)mnLn=p.lng;if(p.lng>mxLn)mxLn=p.lng;}
+  var pad=0.01;mnLa-=pad;mxLa+=pad;mnLn-=pad;mxLn+=pad;
+  var c=_tnlCacheLoad(),ways=[];
+  for(i=0;i<c.w.length;i++){
+    var g=c.w[i].g,arr=[],hit=false;
+    for(var k=0;k+1<g.length;k+=2){
+      arr.push({lat:g[k],lng:g[k+1]});
+      if(g[k]>=mnLa&&g[k]<=mxLa&&g[k+1]>=mnLn&&g[k+1]<=mxLn)hit=true;
+    }
+    if(hit&&arr.length>=2){arr._id=c.w[i].id;ways.push(arr);}
+  }
+  return ways;
 }
 // Overpass へ問い合わせ（ルート沿いの座標列で around 検索）
 function _tnlFetch(){
@@ -2215,28 +2300,50 @@ function _tnlFetch(){
       if(pts[i].s>=nextS){ coords.push(pts[i].lat.toFixed(5)+','+pts[i].lng.toFixed(5)); nextS=pts[i].s+TNL_QUERY_EVERY_M; }
     }
     if(coords.length<2){STATE._tnlBusy=false;return;}
-    var q='[out:json][timeout:20];way["tunnel"]["highway"](around:'+TNL_MATCH_M+','+coords.join(',')+');out geom;';
+    var q='[out:json][timeout:18];way["tunnel"]["highway"](around:'+TNL_MATCH_M+','+coords.join(',')+');out geom;';
     var done=false;
-    var to=setTimeout(function(){ if(!done){done=true;STATE._tnlBusy=false;try{_navLog('tnl-err',{at:'timeout'});}catch(e){}} },TNL_FETCH_TIMEOUT_MS);
-    fetch(OVERPASS_URL,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'data='+encodeURIComponent(q)})
-      .then(function(r){return r.json();})
-      .then(function(j){
-        if(done)return; done=true; clearTimeout(to); STATE._tnlBusy=false;
+    var tryN=STATE._tnlTry;
+    var ep=_tnlEndpoint(tryN), epTag=_tnlEpTag(ep);
+    var _ctl=(typeof AbortController!=='undefined')?new AbortController():null;
+    var to=setTimeout(function(){ if(!done){done=true;STATE._tnlBusy=false;try{if(_ctl)_ctl.abort();}catch(_a){}try{_navLog(tryN<=4?'tnl-err':'ovp-retry',{at:'timeout',sv:epTag,try:tryN});}catch(e){}} },TNL_FETCH_TIMEOUT_MS);
+    var _fail=function(at,extra){
+      if(done)return; done=true; clearTimeout(to); STATE._tnlBusy=false;
+      var o={at:at,sv:epTag,try:tryN}; if(extra){for(var k in extra)o[k]=extra[k];}
+      // 失敗が続く時、重要ログ枠(100件)を埋め尽くさないよう5回目以降は走行ログ側だけに残す
+      try{_navLog(tryN<=4?'tnl-err':'ovp-retry',o);}catch(_e){}
+    };
+    fetch(ep,{method:'POST',credentials:'omit',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'data='+encodeURIComponent(q),signal:_ctl?_ctl.signal:undefined})
+      .then(function(r){
+        // ★v53: 混雑時(429/504等)は HTML が返る。r.json() で読むと Safari は
+        //   "The string did not match the expected pattern" になり原因が分からなかった。
+        return r.text().then(function(tx){return {st:r.status,ok:r.ok,tx:tx};});
+      })
+      .then(function(res){
+        if(done)return;
+        if(!res.ok){_fail('http',{st:res.st,b:String(res.tx||'').replace(/\s+/g,' ').slice(0,30)});return;}
+        var j=null;
+        try{j=JSON.parse(res.tx);}catch(_pe){_fail('parse',{st:res.st,b:String(res.tx||'').replace(/\s+/g,' ').slice(0,30)});return;}
+        // サーバー側タイムアウト等は 200 + remark で返り、elements が欠ける。成功扱いにしない
+        if(j&&j.remark&&/error|timed out/i.test(String(j.remark))){_fail('remark',{b:String(j.remark).slice(0,40)});return;}
+        done=true; clearTimeout(to); STATE._tnlBusy=false;
         var ways=[],el=(j&&j.elements)||[];
         for(var k=0;k<el.length;k++){
           var g=el[k].geometry; if(!g||g.length<2)continue;
           var arr=[];
           for(var m=0;m<g.length;m++)arr.push({lat:g[m].lat,lng:g[m].lon});
+          arr._id=el[k].id;
           ways.push(arr);
         }
         STATE._tnlRaw=ways;
         STATE._tnlStale=false;STATE._tnlTry=0; // ★v35(1) 取得できたので「古い」印とリトライ回数をクリア
-        _navLog('tnl-fetch',{ways:ways.length,pts:coords.length,try:1});
+        STATE._tnlFromCache=false;
+        try{localStorage.setItem('ainavi_tnl_ep',ep);}catch(_ls){} // ★v53 次回はこのサーバーから
+        _navLog('tnl-fetch',{ways:ways.length,pts:coords.length,try:tryN,sv:epTag});
+        try{_tnlCachePut(ways);}catch(_cp){}
         _tnlBuildList();
       })
       .catch(function(e){
-        if(done)return; done=true; clearTimeout(to); STATE._tnlBusy=false;
-        try{_navLog('tnl-err',{at:'fetch',e:String(e).slice(0,40)});}catch(_e){}
+        _fail('fetch',{e:String(e).slice(0,40)});
       });
   }catch(e){ STATE._tnlBusy=false; try{_navLog('tnl-err',{at:'req',e:String(e).slice(0,40)});}catch(_e){} }
 }
@@ -2380,13 +2487,23 @@ function _tnlTick(lat,lng){
       if(!_tnlBuildPts())return;
       STATE._tnlGen=STATE._routeGen;
       STATE._tnlList=null; STATE._tnlNow=null;
+      // ★v53: まだ何も取れていなければ、端末に蓄えた形状で先に組み立てておく。
+      //   _tnlStale=true にするので、通信が使えれば最新の形状で取り直す。
+      if(!STATE._tnlRaw){
+        try{
+          var cw=_tnlCacheWays();
+          if(cw.length){STATE._tnlRaw=cw;STATE._tnlStale=true;STATE._tnlFromCache=true;_navLog('tnl-cache',{ways:cw.length});}
+        }catch(_tc){}
+      }
       if(STATE._tnlRaw)_tnlBuildList();
     }
     // ★v35(1): 取得の起動条件。未取得 or 古い(リルート後)なら取りに行く。
     //   失敗しても TNL_RETRY_MS 後に TNL_MAX_TRY 回まで再挑戦する
     //   （旧: 一度でもタイムアウトすると _tnlFetchAt が残り、二度と取りに行かなかった）。
+    //   ★v53: 失敗が続くほど間隔を広げる（20s,40s,60s…最大90s）。回数で諦めない。
+    var _tw=Math.min(TNL_RETRY_MAX_MS,TNL_RETRY_MS*Math.max(1,STATE._tnlTry||0));
     if(!STATE._tnlBusy&&(!STATE._tnlRaw||STATE._tnlStale)
-       &&(!STATE._tnlFetchAt||(Date.now()-STATE._tnlFetchAt)>TNL_RETRY_MS)
+       &&(!STATE._tnlFetchAt||(Date.now()-STATE._tnlFetchAt)>_tw)
        &&(STATE._tnlTry||0)<TNL_MAX_TRY)_tnlFetch();
     var list=STATE._tnlList;
     if(!list||!list.length)return;
