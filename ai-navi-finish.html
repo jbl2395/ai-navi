@@ -1797,7 +1797,7 @@ var NAVLOG_KEY='ainavi_navlog', NAVLOG_MAX=1000;
 //   すぐ溢れて先頭から捨てられるため、原因解析に要るタグ（トンネル・DR・リルート・案内開始）は
 //   こちらに最大 NAVKEY_MAX 件だけ残す。件数が少ないので push のたびに即 localStorage へ書き出す。
 var NAVKEY_KEY='ainavi_navkeylog', NAVKEY_MAX=100;
-var NAVKEY_RE=/^(tnl-|nav-start|dr-enter|dr-exit|dr-clamp|reroute|miss-turn-near|near-dest-reroute|startsay-|approach-|snap-o|gps-drop|straight-say|chime|guideline)/;
+var NAVKEY_RE=/^(tnl-|nav-start|dr-enter|dr-exit|dr-clamp|reroute|miss-turn-near|near-dest-reroute|startsay-|approach-|snap-o|gps-drop|straight-say|chime|guideline|audio-recover|resume-)/;
 var NAVLOG_FLUSH_MS=2000;
 var NAVLOG_THROTTLE_MS={tollbranch:2000,softdir:2000,dispsnap:3000,hclamp:2000,'tnl-strict':2000,'tnl-lock':5000,'gps-drop':5000}; // 高頻度タグの間引き（他タグは間引かない）
 var _navLogBuf=null,_navLogDirty=false,_navLogFlushAt=0,_navLogThr={};
@@ -2781,7 +2781,7 @@ var _CHAT_BEEP_B64 = 'UklGRuQIAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YcAIAA
 
 function getAudioCtx(){
   if(!_audioCtx){
-    try{ _audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }catch(e){}
+    try{ _audioCtx = new (window.AudioContext || window.webkitAudioContext)(); _audioCtxBornAt=Date.now(); }catch(e){}
   }
   return _audioCtx;
 }
@@ -2874,6 +2874,7 @@ function _fbPlay(type,onfail){
     //   WebAudioへ回らず、そのまま走行中ずっと無音になっていた。拒否を検知して次へ渡す。
     if(p&&p['catch'])p['catch'](function(_er){
       _chimeFbBad=true;
+      try{_audioHintShow(true);}catch(e4){}
       try{_chimeLog('fbfail',{e:(_er&&_er.name)?String(_er.name).slice(0,12):'?'});}catch(e2){}
       if(onfail){try{onfail();}catch(e3){}}
     });
@@ -2990,6 +2991,128 @@ document.addEventListener('pointerdown', function(){
   // ★v51: チャイムが鳴らなかった後の最初のタップで音源を解錠し直す（引きずり防止）
   try{ if(_chimeFbBad) _chimeArm('tap'); }catch(e){}
 }, {passive: true});
+
+// ============================================================
+// ★v52(オーディオセッション完全復帰)
+//   症状: 走行中に音声が途切れると、案内を再開しても発話しないまま。
+//   ログ: chime st:"suspended" + fbfail NotAllowedError、tts-fb r:"play"（Google音声の
+//         <audio>.play() が拒否され続けた）。いったん再生権を失うと戻す経路が無かった。
+//   原因:
+//    (1) unlockAudio() は _unlockedAudio/_chatBeepAudio が null の時しか解錠しない。
+//        要素が残っていると、再生権を失った後のタップでも二度と解錠し直さない。
+//    (2) 一時停止→再開（⏸ボタン）は解錠処理を一切呼んでいなかった。
+//    (3) 再読み込み後の「案内を再開しますか」は confirm() で、その後の案内開始は
+//        タイマーから自動で進むため、ユーザー操作の文脈で一度も解錠されなかった。
+//    (4) iOSでは pointerdown/touchstart はユーザー操作(活性化)として扱われず、
+//        音の解錠に効くのは touchend / click。
+//   対策: recoverAudioSession() を「再開」のユーザー操作の中で同期的に呼び、
+//    AudioContext を作り直し、TTS/ビープ/チャイムの <audio> を再解錠し、
+//    固まった speechSynthesis を解く。音声が死んでいる間はタップ(touchend/click)でも同じ処理を走らせる。
+//   ※必ずユーザー操作(click/touchend)のハンドラ内から呼ぶこと。タイマー等から呼ぶと
+//     新しい AudioContext が running になれず逆効果（v15 の教訓）。
+// ============================================================
+var _SILENT_WAV='data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+var _ttsPlayBad=false, _audioRecoverAt=0, _audioRecoverHardAt=0, _audioCtxBornAt=0;
+function _mediaIdle(a){ try{ return !a || a.paused || a.ended; }catch(e){ return true; } }
+function _audioBroken(){
+  if(_ttsPlayBad||_chimeFbBad) return true;
+  try{ if(_audioCtx && _audioCtx.state!=='running') return true; }catch(e){}
+  return false;
+}
+function recoverAudioSession(why,hard){
+  var now=Date.now();
+  // 連打スロットル。「再開」ボタン等の hard 呼び出しは、同じタップで先に走る
+  // タップ復帰(capture段のclick)に潰されないよう別枠で判定する。
+  if(hard){ if(now-_audioRecoverHardAt<600) return; _audioRecoverHardAt=now; }
+  else if(now-_audioRecoverAt<1200) return;
+  _audioRecoverAt=now;
+  var st0='none';
+  try{ st0=_audioCtx?_audioCtx.state:'none'; }catch(e){}
+  var lg={w:String(why||'').slice(0,10),st0:st0,tb:_ttsPlayBad?1:0,cb:_chimeFbBad?1:0};
+  STATE.audioUnlocked=true;
+  // 1) AudioContext: running でなければ捨てて、このユーザー操作の中で作り直す
+  try{
+    var c=_audioCtx;
+    // interrupted/closed は作り直す。suspended でも作ったばかり(同じタップ内など)なら
+    // resume が非同期で未確定なだけなので捨てずに resume に任せる。
+    if(c && c.state!=='running' && (c.state!=='suspended' || (now-_audioCtxBornAt)>1500)){
+      try{ if(c.close){ var pc=c.close(); if(pc&&pc['catch'])pc['catch'](function(){}); } }catch(e1){}
+      _audioCtx=null;
+      lg.re=1;
+    }
+    var nc=getAudioCtx();
+    if(nc){
+      try{ if(nc.state!=='running'){ var pr=nc.resume(); if(pr&&pr['catch'])pr['catch'](function(){}); } }catch(e2){}
+      try{ var b=nc.createBuffer(1,1,22050); var s=nc.createBufferSource(); s.buffer=b; s.connect(nc.destination); s.start(0); }catch(e3){}
+    }
+  }catch(e){}
+  // 2) Google TTS 用 <audio>: 再生中でなければ新しい要素に差し替えて、この操作で再生権を得る
+  try{
+    if(_mediaIdle(_unlockedAudio)){
+      if(_unlockedAudio){ try{ _unlockedAudio.onended=null; _unlockedAudio.pause(); }catch(e4){} }
+      var a=new Audio(); a.src=_SILENT_WAV;
+      _unlockedAudio=a;
+      var pa=a.play(); if(pa&&pa['catch'])pa['catch'](function(){});
+      _ttsPlayBad=false;
+    }
+  }catch(e){}
+  // 3) マイク合図ビープ用 <audio>（無音のまま再生権だけ取る）
+  try{
+    if(_mediaIdle(_chatBeepAudio)){
+      var bp=new Audio(); bp.src='data:audio/wav;base64,'+_CHAT_BEEP_B64;
+      _chatBeepAudio=bp; _fbBless(bp);
+    }
+  }catch(e){}
+  // 4) チャイムのフォールバック <audio> と無音プライマー
+  try{ _fbPrepare(true); _chimeFbBad=false; }catch(e){}
+  try{ _ensureSilentPrimer(); if(_silentPrimer){ _silentPrimer.currentTime=0; var ps=_silentPrimer.play(); if(ps&&ps['catch'])ps['catch'](function(){}); } }catch(e){}
+  // 5) iPhone内蔵音声: 一時停止/詰まり（speaking のまま進まない）を解く
+  try{
+    var ss=window.speechSynthesis;
+    if(ss){
+      if(ss.paused){ try{ ss.resume(); }catch(e5){} }
+      if((ss.speaking||ss.pending) && (hard || !STATE._speaking)){ try{ ss.cancel(); }catch(e6){} lg.sc=1; }
+      var ut=new SpeechSynthesisUtterance(''); ut.volume=0;
+      try{ ss.speak(ut); }catch(e7){}
+    }
+  }catch(e){}
+  if(hard){ STATE._speaking=false; }
+  try{ _audioHintShow(false); }catch(e){}
+  try{ prefetchCoreTts(); }catch(e){}
+  // 復帰結果は非同期に確定するので少し待ってから記録（次回の実走ログで効いたか確認できる）
+  setTimeout(function(){
+    try{ lg.st1=_audioCtx?_audioCtx.state:'none'; }catch(e){ lg.st1='?'; }
+    try{ _navLog('audio-recover',lg); }catch(e){}
+  },400);
+}
+// 音声が止まっている間だけ出す小さな案内（タップすれば復帰することを伝える）
+function _audioHintShow(on){
+  var el=document.getElementById('audio-hint');
+  if(!on){ if(el)el.style.display='none'; return; }
+  if(!(STATE.navActive||STATE.navStarted))return;
+  if(!el){
+    el=document.createElement('div');
+    el.id='audio-hint';
+    el.textContent='🔇 音声が停止しています。画面をタップすると復帰します';
+    el.style.cssText='position:fixed;left:50%;top:calc(env(safe-area-inset-top,0px) + 8px);transform:translateX(-50%);'+
+      'z-index:99990;background:rgba(200,40,40,0.92);color:#fff;font-size:14px;font-weight:700;'+
+      'padding:8px 14px;border-radius:18px;box-shadow:0 2px 10px rgba(0,0,0,0.4);max-width:calc(100vw - 32px);'+
+      'text-align:center;pointer-events:none;';
+    document.body.appendChild(el);
+  }
+  el.style.display='block';
+}
+// iOSで音の解錠に効くのは touchend / click。音声が死んでいる時のタップで丸ごと復帰させる。
+function _onGestureAudio(){
+  try{
+    if(typeof CHAT!=='undefined' && CHAT.active) return; // マイク聞き取り中のセッションは触らない
+    if(!STATE.audioUnlocked || _audioBroken()) recoverAudioSession('tap',false);
+  }catch(e){}
+}
+try{
+  document.addEventListener('touchend',_onGestureAudio,{passive:true,capture:true});
+  document.addEventListener('click',_onGestureAudio,true);
+}catch(_gae){}
 // ★v51: バックグラウンドから戻った時もオーディオ経路を起こし直す（iOSは復帰時に
 //   AudioContextが interrupted のまま／<audio>の再生権が切れていることがある）
 try{
@@ -4612,7 +4735,10 @@ function onStopBtn(){
 
 function onPauseBtn(){
   if(!STATE.navStarted){return;}
-  if(!STATE.navPaused){pauseNav();}else{resumeNavFromPause();}
+  if(!STATE.navPaused){pauseNav();}else{
+    try{recoverAudioSession('unpause',true);}catch(e){} // ★v52: 再開のタップでオーディオセッションを必ず復帰
+    resumeNavFromPause();
+  }
 }
 
 function pauseNav(){
@@ -4639,6 +4765,7 @@ function resumeNavFromPause(){
 
 function onNavStartBtn(){
   unlockAudio();
+  try{recoverAudioSession('navbtn',true);}catch(e){} // ★v52: 既存の<audio>が再生権を失っていても解錠し直す
   if(STATE.navPaused){resumeNavFromPause();return;}
   if(!STATE.navStarted&&STATE.currentMap&&STATE.currentDestGeo){beginNavigation();return;}
   if(!STATE.navStarted){retryGpsAndStart();}
@@ -7043,6 +7170,48 @@ function _navLoadTrip(){
     return o;
   }catch(e){return null;}
 }
+// ★v52: 「再開しますか」を confirm() ではなく画面内ボタンで尋ねる。
+//   confirm() のOKはページへのユーザー操作として扱われず、その後の案内開始もタイマーから
+//   自動で進むため、再読み込み後は一度も音声が解錠されず「再開しても喋らない」状態になっていた。
+//   画面内ボタンのタップ(click)の中で recoverAudioSession() を呼んでオーディオセッションを確実に起こす。
+function _askResume(msg,onYes,onNo){
+  var ov;
+  try{
+    ov=document.createElement('div');
+    ov.id='resume-ask';
+    ov.style.cssText='position:fixed;inset:0;z-index:99995;background:rgba(0,0,0,0.6);display:flex;'+
+      'align-items:center;justify-content:center;padding:16px;box-sizing:border-box;';
+    var box=document.createElement('div');
+    box.style.cssText='background:#1c2636;color:#fff;border-radius:16px;padding:20px 18px;width:100%;max-width:420px;'+
+      'box-shadow:0 6px 24px rgba(0,0,0,0.5);font-size:16px;line-height:1.6;box-sizing:border-box;';
+    var tx=document.createElement('div');
+    tx.style.cssText='white-space:pre-wrap;margin-bottom:18px;';
+    tx.textContent=msg;
+    var row=document.createElement('div');
+    row.style.cssText='display:flex;gap:12px;';
+    var bn=document.createElement('button');
+    bn.type='button';bn.textContent='やめる';
+    bn.style.cssText='flex:1;padding:14px 0;font-size:17px;border-radius:12px;border:1px solid #556;background:#2a3446;color:#cdd;';
+    var by=document.createElement('button');
+    by.type='button';by.textContent='再開する';
+    by.style.cssText='flex:1.4;padding:14px 0;font-size:17px;font-weight:700;border-radius:12px;border:none;background:#00a8e0;color:#fff;';
+    row.appendChild(bn);row.appendChild(by);
+    box.appendChild(tx);box.appendChild(row);ov.appendChild(box);
+    var done=false;
+    var close=function(){try{if(ov.parentNode)ov.parentNode.removeChild(ov);}catch(e){}};
+    by.addEventListener('click',function(){
+      if(done)return;done=true;close();
+      try{unlockAudio();}catch(e){}
+      try{recoverAudioSession('resume',true);}catch(e){} // このタップの中で必ず解錠
+      onYes();
+    });
+    bn.addEventListener('click',function(){if(done)return;done=true;close();onNo();});
+    document.body.appendChild(ov);
+  }catch(e){
+    try{if(ov&&ov.parentNode)ov.parentNode.removeChild(ov);}catch(e2){}
+    if(window.confirm(msg))onYes();else onNo(); // 画面内ボタンが作れない時だけ従来の確認
+  }
+}
 // 起動直後に1回だけ、中断した案内があれば再開を尋ねる。
 // 「はい」なら通常と同じ startLiveNav → ルート再計算 → 案内開始まで自動で進む。
 function _navOfferResume(){
@@ -7051,14 +7220,15 @@ function _navOfferResume(){
     var mins=Math.round((Date.now()-o.t)/60000);
     _navLog('resume-offer',{d:String(o.d).slice(0,16),min:mins,st:o.st||0});
     setTimeout(function(){
-      if(!confirm('前回の案内が中断されています。\n\n「'+o.d+'」への案内を再開しますか？')){
-        _navClearTrip();_navLog('resume-no',{});return;
-      }
-      _navLog('resume-yes',{});
-      STATE._resumeAutoStart=true; // 目的地プレビューが整い次第、自動で案内開始まで進める
-      _navClearTrip();
-      try{startLiveNav(o.d,{lat:o.la,lng:o.ln});}
-      catch(e){STATE._resumeAutoStart=false;_navLog('resume-err',{m:String(e&&e.message||'').slice(0,40)});}
+      _askResume('前回の案内が中断されています。\n\n「'+o.d+'」への案内を再開しますか？',function(){
+        _navLog('resume-yes',{});
+        STATE._resumeAutoStart=true; // 目的地プレビューが整い次第、自動で案内開始まで進める
+        _navClearTrip();
+        try{startLiveNav(o.d,{lat:o.la,lng:o.ln});}
+        catch(e){STATE._resumeAutoStart=false;_navLog('resume-err',{m:String(e&&e.message||'').slice(0,40)});}
+      },function(){
+        _navClearTrip();_navLog('resume-no',{});
+      });
     },1200); // 画面の初期化を待ってから尋ねる
   }catch(e){}
 }
@@ -7313,10 +7483,14 @@ function _playTtsAudio(seq,b64,text,onDone){
   a.src='data:audio/mp3;base64,'+b64;
   // ★設定スライダーの音量を再生に反映（従来は1.0固定でGemini応答/案内が常に最大音量だった）
   var _v=loadSt().volume; a.volume=Math.min(1.0,Math.max(0,(_v!==undefined?_v:100)/100));
-  a.play().catch(function(){
+  // ★v52: 再生の成否を記録。拒否されたら「音声が死んでいる」印を立て、次のタップ／再開操作で
+  //   recoverAudioSession() が要素ごと解錠し直す（旧: 以後ずっとiPhone声のままだった）。
+  var _pp0=a.play();
+  if(_pp0&&_pp0.then)_pp0.then(function(){_ttsPlayBad=false;try{_audioHintShow(false);}catch(e){}},function(){
     setTimeout(function(){
       if(seq!==STATE._speakSeq){STATE._speaking=false;return;}
-      a.play().catch(function(){STATE._speaking=false;if(seq===STATE._speakSeq){_ttsFbLog('play',text);fallbackTTS(text,onDone);}});
+      var _pp1=a.play();
+      if(_pp1&&_pp1.then)_pp1.then(function(){_ttsPlayBad=false;},function(){_ttsPlayBad=true;try{_audioHintShow(true);}catch(e){}STATE._speaking=false;if(seq===STATE._speakSeq){_ttsFbLog('play',text);fallbackTTS(text,onDone);}});
     },250);
   });
   // ★無音復帰(対策A): play()が成功してもBT経路(HFP切断後)が落ちていると無音のことがある。
@@ -12796,9 +12970,13 @@ var INTL=(function(){
       return;
     }
     setTimeout(function(){
-      if(!window.confirm('フェリーの案内が中断されています。\n\n「'+o.na+' → '+o.nb+'」の案内を再開しますか？')){
-        clearFerry();log('fry-resume',{s:'no'});return;
-      }
+      var _q='フェリーの案内が中断されています。\n\n「'+o.na+' → '+o.nb+'」の案内を再開しますか？';
+      var _no=function(){clearFerry();log('fry-resume',{s:'no'});};
+      // ★v52: confirm() ではなく画面内ボタンで尋ね、そのタップで音声を解錠する（車の案内と同じ）
+      if(typeof _askResume==='function'){_askResume(_q,_yes,_no);}
+      else if(window.confirm(_q)){_yes();}else{_no();}
+    },1500);
+    function _yes(){
       o.arrSpoken=false;   // 開き直した時はもう一度案内できるように戻す
       o._rchk=true;        // 最初に届いた位置で「まもなく/到着しました」を決める
       M.ferry=o;saveFerry();
@@ -12808,7 +12986,7 @@ var INTL=(function(){
         if(!ok)return;
         openSail();startWatch();
       });
-    },1500);
+    }
   }
   try{
     if(document.readyState==='complete')offerResume();
