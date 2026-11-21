@@ -1799,7 +1799,7 @@ var NAVLOG_KEY='ainavi_navlog', NAVLOG_MAX=1000;
 var NAVKEY_KEY='ainavi_navkeylog', NAVKEY_MAX=100;
 var NAVKEY_RE=/^(tnl-|nav-start|dr-enter|dr-exit|dr-clamp|reroute|miss-turn-near|near-dest-reroute|startsay-|approach-|snap-o|gps-drop|straight-say|chime|guideline|audio-recover|resume-)/;
 var NAVLOG_FLUSH_MS=2000;
-var NAVLOG_THROTTLE_MS={tollbranch:2000,softdir:2000,dispsnap:3000,hclamp:2000,'tnl-strict':2000,'tnl-lock':5000,'gps-drop':5000}; // 高頻度タグの間引き（他タグは間引かない）
+var NAVLOG_THROTTLE_MS={'reroute-hold':5000,'tnl-xp':5000,tollbranch:2000,softdir:2000,dispsnap:3000,hclamp:2000,'tnl-strict':2000,'tnl-lock':5000,'gps-drop':5000}; // 高頻度タグの間引き（他タグは間引かない）
 var _navLogBuf=null,_navLogDirty=false,_navLogFlushAt=0,_navLogThr={};
 // ============================================================
 // ★v22(方位診断ログ) — 純追加。HEADLOG_ENABLE=false で v21 と完全に同一動作に戻る。
@@ -2462,6 +2462,70 @@ function _tnlSayPre(t,s,src){
     return true;
   }catch(e){ try{_navLog('tnl-err',{at:'say',e:String(e).slice(0,40)});}catch(_e){} return false; }
 }
+// ============================================================
+// ★v55(トンネル内の誤リルート対策)
+//   症状: 長いトンネルの入口〜序盤、まだ仮想走行(DR)に入る前に、カーブで「ルートを外れました」。
+//   仕組み: iOSはトンネル内でも数十秒、入口の向きのまま「直線で外挿した位置」を出し続け、
+//     精度(acc)は 5→12→17m とじわじわ悪化するだけ（11/21実走: 17:21:36〜46 acc 6→12）。
+//     道路がカーブしていると外挿位置は外側へ離れ、45m超が2回続けばリルートになる。
+//     数値再現(95km/h, acc +0.6m/s): 既知トンネルの切れ目直後(open通過 acc≦12)は R≦500m で
+//     入口から約210〜260m(8〜10秒)、トンネル情報が無い時(acc≦30まで採用)は R=2500m でも
+//     約530m(20秒)でリルートが出る。リルート後は新ルートの世代になり、トンネル一覧は次の実fixまで
+//     作り直されない＝トンネル内の予告・締め出し・出口クランプが止まっていた。
+//   対策: (1) 外挿の特徴（精度が単調に悪化・向きが一定・走行中）を検知する
+//     (2) 既知トンネルの区間内、または外挿中はリルートを保留する（トンネル内で道を外れることは無い）
+//     (3) 切れ目の「open」通過は外挿中なら通さない（DRで走り切る）
+//     (4) 仮想走行中にルートが変わっても、その場でトンネル一覧を作り直す
+// ============================================================
+var XP_MIN_N=5, XP_MIN_RISE_M=1.5, XP_MAX_HSPREAD=6, XP_MIN_SPD_MPS=8, RRHOLD_MAX_MS=45000;
+function _xpPush(pos){
+  try{
+    var now=Date.now(),a=pos.coords.accuracy,h=pos.coords.heading,v=pos.coords.speed;
+    var tr=STATE._xpTrail||(STATE._xpTrail=[]);
+    if(tr.length&&now-tr[tr.length-1].t>3500)tr.length=0;
+    tr.push({t:now,a:(a!=null&&!isNaN(a))?a:null,h:(h!=null&&!isNaN(h)&&h>=0&&h<360)?h:null,v:(v!=null&&!isNaN(v))?v:null});
+    if(tr.length>8)tr.shift();
+  }catch(e){}
+}
+// 直近の実fixが「直線外挿」の特徴を持つか
+function _xpCreeping(){
+  try{
+    var tr=STATE._xpTrail; if(!tr||tr.length<XP_MIN_N)return false;
+    var q=tr.slice(-XP_MIN_N),i;
+    for(i=0;i<q.length;i++){ if(q[i].a===null)return false; if(q[i].v!==null&&q[i].v<XP_MIN_SPD_MPS)return false; }
+    for(i=1;i<q.length;i++){ if(q[i].a<q[i-1].a-0.5)return false; }  // 精度が単調に悪化（良くならない）
+    if(q[q.length-1].a-q[0].a<XP_MIN_RISE_M)return false;
+    var hs=[];for(i=0;i<q.length;i++)if(q[i].h!==null)hs.push(q[i].h);
+    if(hs.length>=2){
+      var mn=360,mx=-360,b=hs[0];
+      for(i=0;i<hs.length;i++){var d=((hs[i]-b+540)%360)-180;if(d<mn)mn=d;if(d>mx)mx=d;}
+      if(mx-mn>XP_MAX_HSPREAD)return false;               // 向きが変わっている＝実際に道なりに曲がっている
+    }
+    return true;
+  }catch(e){return false;}
+}
+// 現在地が既知トンネルの区間内か（入口の手前50m〜出口の50m手前）
+function _tnlInsideAt(lat,lng){
+  try{
+    var list=STATE._tnlList; if(!list||!list.length||STATE._tnlGen!==STATE._routeGen)return false;
+    if(lat==null||lng==null)return false;
+    var s=_tnlProgressS(lat,lng); if(s===null)return false;
+    for(var i=0;i<list.length;i++){ if(s>=list[i].sIn-50&&s<list[i].sOut-50)return true; }
+  }catch(e){}
+  return false;
+}
+// リルートを保留すべきか。理由文字列 or ''
+function _rerouteHoldWhy(){
+  try{
+    var now=Date.now(),why='';
+    if(_tnlInsideAt(STATE.lastLat,STATE.lastLng))why='tunnel';
+    else if(_xpCreeping())why='extrap';
+    if(!why){STATE._rrHoldFrom=0;return '';}
+    if(!STATE._rrHoldFrom)STATE._rrHoldFrom=now;
+    if(now-STATE._rrHoldFrom>RRHOLD_MAX_MS)return ''; // 保険: 保留が続きすぎたら通常判定に戻す
+    return why;
+  }catch(e){return '';}
+}
 // ★v54: トンネル予告は said を先に立ててから喋るため、発話が途中で消えると二度と言わない。
 //   消える経路: (a) 待機中(最大4秒)にルート世代が変わる（再開・リルート直後の nav-start）
 //   (b) 直後の別の発話（開始発話・最初の交差点案内・道なり案内等）に上書きされる
@@ -2557,11 +2621,19 @@ function _tnlTick(lat,lng){
 function _tnlTickDr(lat,lng){
   if(!TNL_ENABLE||!TNL_INSAY_ENABLE)return;
   try{
+    // ★v55: 仮想走行中にルートが変わった（トンネル内リルート等）ら、その場で一覧を作り直す。
+    //   旧: 実fixが来るまで一覧が空のまま＝トンネル内の予告・締め出し・出口クランプが全部止まっていた。
+    if(STATE._tnlGen!==STATE._routeGen){
+      if(!STATE.routeSteps||!STATE.routeSteps.length||!_tnlBuildPts())return;
+      STATE._tnlGen=STATE._routeGen; STATE._tnlList=null;
+      if(STATE._tnlRaw)_tnlBuildList();
+      try{_navLog('tnl-drbuild',{n:(STATE._tnlList||[]).length});}catch(_db){}
+    }
     var list=STATE._tnlList;
     if(!list||!list.length)return;
-    if(STATE._tnlGen!==STATE._routeGen)return; // ルートが変わった直後は実fixの _tnlTick に任せる
     var s=_tnlProgressS(lat,lng);
     if(s===null)return;
+    try{ if(!STATE._tnlNow){ for(var _ni=0;_ni<list.length;_ni++){ if(s>=list[_ni].sIn-5&&s<=list[_ni].sOut){STATE._tnlNow=list[_ni];break;} } } }catch(_nn){} // ★v55 締め出しを効かせ直す
     for(var i=0;i<list.length;i++){
       var t=list[i];
       // ★v39h(C): 統合トンネルは part がまだ残っていれば t.said でも呼ぶ（part側で判定）
@@ -5712,6 +5784,13 @@ function triggerReroute(currentMinDist){
             ||(_missFast&&(_elapR>=MISS_FAST_MS)&&(_movedR>=REROUTE_MIN_MOVE_M)&&!_drRecent);
   if(_elapR<REROUTE_COOLDOWN_MS&&!_fastOk&&!_afRetry){STATE.offRouteCount=0;return;}
   if(_movedR<REROUTE_MIN_MOVE_M&&!_afRetry){STATE.offRouteCount=0;return;}
+  // ★v55: トンネル区間内／iOSの直線外挿中はリルートしない（トンネル内で道を外れることは無い）
+  var _rrh=_rerouteHoldWhy();
+  if(_rrh){
+    STATE.offRouteCount=0;
+    try{_navLog('reroute-hold',{why:_rrh,off:(typeof currentMinDist==='number'?Math.round(currentMinDist):null),acc:Math.round(STATE._lastAcc||0)});}catch(_rhe){}
+    return;
+  }
   _navLog('reroute-fire',{off:(typeof currentMinDist==='number'?Math.round(currentMinDist):null),step:STATE.stepIdx,fast:!!( _fastOk&&_elapR<REROUTE_COOLDOWN_MS),miss:_missFast,dr:_drRecent});
   STATE.rerouteInProgress=true;STATE.offRouteCount=0;STATE._allFailAt=0; // ★v40(問題1): 立て直しの印は消費
   STATE.isReroute=true; // ★リルートフラグ
@@ -8850,6 +8929,7 @@ function startGpsTracking(map,destGeo,fromStepIdx){
       if(!pos._dr){
         var _acc=pos.coords.accuracy;
         if(_acc!=null&&!isNaN(_acc)&&_acc>DR_LOST_ACCURACY_M)return; // 精度が悪すぎる実fixは無効（DR継続）
+        try{_xpPush(pos);}catch(_xpe){} // ★v55: 外挿検知用（採否に関係なく全実fixを記録）
         // ★v35(3A): 既知トンネルの中は実fixを採らず丸ごと仮想で走る。
         if(TNL_LOCK_ENABLE&&STATE._tnlNow&&!STATE._drClamped){
           var _lkAcc=(_acc!=null&&!isNaN(_acc))?_acc:0;
@@ -8865,7 +8945,9 @@ function startGpsTracking(map,destGeo,fromStepIdx){
           // ② 直前に通した後の猶予中は、動いている限り通し続ける（トンネルの切れ目を走り切る）
           if(!_lkOut&&STATE._lkOpenUntil&&_lkNow<STATE._lkOpenUntil&&_lkAcc<=TNL_LOCK_GOOD_ACC_M){
             var _lkMv=_lkD(STATE._lkLastAcc);
-            if(_lkMv===null||_lkMv>=TNL_LOCK_MOVE_M){_lkOut=true;_lkWhy='open';}
+            // ★v55: 精度がじわじわ悪化している＝次のトンネルに入って外挿が始まっている。通さずDRへ。
+            if((_lkMv===null||_lkMv>=TNL_LOCK_MOVE_M)&&!_xpCreeping()){_lkOut=true;_lkWhy='open';}
+            else if(_xpCreeping()){try{_navLog('tnl-xp',{acc:Math.round(_lkAcc)});}catch(_xe){}}
           }
           // ③ トンネルの切れ目でGPSが本当に戻った＝精度が良く、仮想位置のすぐそばで、動いている
           if(!_lkOut&&STATE._drActive&&STATE._drCur&&STATE._lkFrom&&(_lkNow-STATE._lkFrom)>=TNL_LOCK_MIN_MS&&_lkAcc<=TNL_LOCK_GOOD_ACC_M){
