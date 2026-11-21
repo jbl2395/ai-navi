@@ -2458,9 +2458,36 @@ function _tnlSayPre(t,s,src){
     //   9/2実走: 06:45:35 tnl-pre(tail=その先、海南IC出口です) → 06:47:01 tnl-resay で重複。
     try{ if(tail&&b){ if(!STATE._tnlPreBr||STATE._tnlPreBrGen!==STATE._routeGen){STATE._tnlPreBr={};STATE._tnlPreBrGen=STATE._routeGen;} STATE._tnlPreBr[b.k]=1; } }catch(_pbe){}
     try{_navLog('tnl-pre',{len:Math.round(_tLen),d:Math.round(_tIn-s),tail:tail.slice(0,24),step:STATE.stepIdx,src:src||'fix',pi:_pi,pn:(_pl?_pl.length:1)});}catch(_e){}
-    speakTTSWithChime(msg);
+    _tnlSpeakGuarded(msg,t,_pt,_pi);
     return true;
   }catch(e){ try{_navLog('tnl-err',{at:'say',e:String(e).slice(0,40)});}catch(_e){} return false; }
+}
+// ★v54: トンネル予告は said を先に立ててから喋るため、発話が途中で消えると二度と言わない。
+//   消える経路: (a) 待機中(最大4秒)にルート世代が変わる（再開・リルート直後の nav-start）
+//   (b) 直後の別の発話（開始発話・最初の交差点案内・道なり案内等）に上書きされる
+//   (c) 再生権を失っていて鳴らない。他の案内は帯/フェーズで次の機会があるので、
+//   「トンネル出口です」だけが抜け落ちて見えた。
+//   対策: 言い終わり(onDone)を確認できなければ、1回だけ said を戻して次のtickで言い直させる
+//   （その時点の残り距離で組み立て直すので内容も正しい）。
+var TNL_SAY_CONFIRM_MS=15000;
+function _tnlSpeakGuarded(msg,t,pt,pi){
+  var done=false,gen=STATE._routeGen||0;
+  var tgt=pt||t;
+  tgt._sayTry=(tgt._sayTry||0)+1;
+  try{
+    speakTTSWithChime(msg,function(){done=true;try{_navLog('tsay-ok',{pi:pi,try:tgt._sayTry});}catch(_e){}});
+  }catch(e){}
+  setTimeout(function(){
+    if(done)return;
+    try{
+      if(tgt._sayTry>=2){_navLog('tnl-lost',{pi:pi,why:'give-up',g:(gen!==(STATE._routeGen||0))?1:0});return;}
+      // 同じリストが生きていれば印を戻す。リストが組み直されていれば新リストは未発話から始まる。
+      var list=STATE._tnlList||[],alive=false;
+      for(var i=0;i<list.length;i++){if(list[i]===t){alive=true;break;}}
+      if(alive){ if(pt)pt.said=false; t.said=false; }
+      _navLog('tnl-lost',{pi:pi,why:'nodone',alive:alive?1:0,g:(gen!==(STATE._routeGen||0))?1:0});
+    }catch(_e2){}
+  },TNL_SAY_CONFIRM_MS);
 }
 // ★v31: DR突入時の保険。手前で撃ち損ねたトンネルがあれば、ここで1回だけ予告する。
 //   （トンネル内は _tnlTick が呼ばれない＝実fixが止まるので、ここが最後のチャンス）
@@ -2489,10 +2516,14 @@ function _tnlTick(lat,lng){
       STATE._tnlList=null; STATE._tnlNow=null;
       // ★v53: まだ何も取れていなければ、端末に蓄えた形状で先に組み立てておく。
       //   _tnlStale=true にするので、通信が使えれば最新の形状で取り直す。
-      if(!STATE._tnlRaw){
+      if(!STATE._tnlRaw||STATE._tnlStale){
         try{
-          var cw=_tnlCacheWays();
-          if(cw.length){STATE._tnlRaw=cw;STATE._tnlStale=true;STATE._tnlFromCache=true;_navLog('tnl-cache',{ways:cw.length});}
+          // ★v54: 手元の形状（前ルート分）に端末キャッシュの形状を足す（way id で重複除去）
+          var cw=_tnlCacheWays(),base=STATE._tnlRaw||[],seen={},mg=[],ci;
+          for(ci=0;ci<base.length;ci++){mg.push(base[ci]);if(base[ci]._id!==undefined)seen[base[ci]._id]=1;}
+          var add=0;
+          for(ci=0;ci<cw.length;ci++){if(cw[ci]._id!==undefined&&seen[cw[ci]._id])continue;mg.push(cw[ci]);add++;}
+          if(mg.length){STATE._tnlRaw=mg;STATE._tnlStale=true;if(add)STATE._tnlFromCache=true;_navLog('tnl-cache',{ways:mg.length,add:add,keep:base.length});}
         }catch(_tc){}
       }
       if(STATE._tnlRaw)_tnlBuildList();
@@ -8702,7 +8733,11 @@ function startGpsTracking(map,destGeo,fromStepIdx){
   STATE._drClampM=null; STATE._drClamped=false; // ★トンネル対策(v7): 分岐越え防止クランプをリセット
   STATE._headHoldOn=false; // ★v9(方位保持): 方位ホールド状態をリセット
   STATE._snapOff=null; // ★v29(見た目スナップ): 表示オフセットをリセット
-  try{_tnlReset(!!STATE.isReroute);}catch(_tnr){} // ★v30/v35: トリップ開始は取り直し、リルートは取得済み形状を保持して投影し直す
+  // ★v54: 一時停止→再開（startGpsTracking を isReroute=false で通る）でも取得済み形状を捨てない。
+  //   旧: 再開のたびに形状を捨てて取り直し、その取得が失敗すると以後トンネルを1本も認識せず
+  //   「トンネル出口です」だけが出なくなっていた（他の案内は普通に出るので気付きにくい）。
+  //   形状は位置で照合するので、別ルートでも無関係なトンネルは一致せず害は無い。取り直しも予約される。
+  try{_tnlReset(true);}catch(_tnr){} // ★v30/v35/v54
   STATE._tunLastFix=null;STATE._tunSpd=[];STATE._tunRejFrom=0;STATE._tunRejN=0; // ★トンネル対策(v3): ゴースト判定/速度サンプルもリセット
   STATE._tunCum=null;STATE._tunCumFor=null;
   try{_navLog('nav-start',{dest:(STATE.currentDest||'').slice(0,24),n:(STATE.routeSteps||[]).length,toll:!!STATE._routeHasToll});}catch(_nse){}
